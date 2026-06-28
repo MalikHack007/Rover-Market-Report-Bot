@@ -1,0 +1,11 @@
+[Unit]
+Description=Rover daily rank & pricing report
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/malikhack007/Repos/rover-automations
+# brief pause so Wi-Fi has reconnected when the run is triggered on wake/boot
+ExecStartPre=/bin/sleep 15
+ExecStart=/home/malikhack007/Repos/rover-automations/.venv/bin/python /home/malikhack007/Repos/rover-automations/rover_report.py
+# stdout/stderr (incl. the report text if email ever fails) go to the journal:
+#   journalctl --user -u rover-report.service -e

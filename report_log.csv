@@ -13,3 +13,9 @@ date,zip,neighborhood,rank,median,n_sitters
 2026-06-28,78757,Crestview,3,50.0,20
 2026-06-28,78751,Hyde Park,5,50.0,20
 2026-06-28,ALL,AGGREGATE,,49.0,
+2026-06-28,78753,Windsor Hills,2,45.0,20
+2026-06-28,78723,Windsor Park,4,50.0,20
+2026-06-28,78701,Downtown,14,50.0,20
+2026-06-28,78757,Crestview,3,50.0,20
+2026-06-28,78751,Hyde Park,5,50.0,20
+2026-06-28,ALL,AGGREGATE,,50.0,

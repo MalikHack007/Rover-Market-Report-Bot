@@ -1,0 +1,13 @@
+[Unit]
+Description=Run the Rover daily report at 8 AM (Central)
+
+[Timer]
+# Fires at 08:00 system-local time. Verify your box is on Central:  timedatectl
+OnCalendar=*-*-* 08:00:00
+# Catch up: if 8 AM passed while the laptop was off/asleep, run on next wake/boot
+Persistent=true
+# small jitter so it doesn't hit at the exact same instant every day (optional)
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target
