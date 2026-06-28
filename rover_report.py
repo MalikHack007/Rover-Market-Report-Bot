@@ -43,7 +43,9 @@ EMAIL_TO = "malikzhangggg@gmail.com"                  # report recipient (your o
 HEADLESS = True
 DEBUG_VERIFY = True   # set True for ONE run to dump card order + save all screenshots,
                        # so you can confirm the rank match; leave False for normal runs.
-DELAY = (12.0, 25.0)   # seconds between zip fetches
+DELAY = (45.0, 120.0)  # seconds between zip fetches -- minutes-scale spacing is the
+                       # main lever against Cloudflare's burst detection. Widen if needed;
+                       # a daily report doesn't care that the run takes several minutes.
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCOPES = ["https://www.googleapis.com/auth/gmail.send"]
 UA = (
@@ -54,34 +56,32 @@ UA = (
 # (zip, neighborhood, captured search URL). Capture each URL once on rover.com and
 # paste it in. Only start_date/end_date/page are rewritten at runtime.
 ZIPS = [
-    ("78753", "Windsor Hills", (
-        "https://www.rover.com/search/?alternate_results=true&accepts_only_one_client=false"
-        "&at_daycare_facility=true&apse=false&bathing_grooming=false&cat_care=false"
-        "&centerlat=30.3889868&centerlng=-97.6710889&dogs_allowed_on_bed=false"
-        "&dogs_allowed_on_furniture=false&end_date=2026-06-19&frequency=onetime"
-        "&fulltime_availability=true&in_sitters_home=true&is_initial_search=false"
-        "&is_premier=false&location=78753&medium_dogs=false&minprice=1&page=1&pet="
-        "&pet_type=dog&raw_location_types=postal_code&service_type=overnight-boarding"
-        "&start_date=2026-06-15&location_type=zip-code&dog_count=2&cat_count=0&puppy_count=0"
-    )),
-    ("78723", "Windsor Park", "PASTE_78723_URL"),
-    ("78701", "Downtown",     "PASTE_78701_URL"),
-    ("78757", "Crestview",    "PASTE_78757_URL"),
-    ("78751", "Hyde Park",    "PASTE_78751_URL"),
+    ("78753", "Windsor Hills", "https://www.rover.com/search/?alternate_results=true&accepts_only_one_client=false&apse=false&bathing_grooming=false&cat_care=false&centerlat=30.3889868&centerlng=-97.6710889&dogs_allowed_on_bed=false&dogs_allowed_on_furniture=false&end_date=2026-06-29&frequency=onetime&morning_availability=false&midday_availability=false&evening_availability=false&fulltime_availability=true&monday=false&tuesday=false&wednesday=false&thursday=false&friday=false&saturday=false&sunday=false&giant_dogs=false&has_fenced_yard=false&has_house=false&has_no_children=false&in_sitters_home=true&is_initial_search=false&is_premier=false&knows_first_aid=false&large_dogs=false&location=78753&medium_dogs=true&minprice=1&no_caged_pets=false&no_cats=false&no_children_0_5=false&no_children_6_12=false&non_smoking=false&page=1&person_does_not_have_dogs=false&pet=&petsitusa=false&pet_type=dog&puppy=false&raw_location_types=postal_code&service_type=overnight-boarding&small_dogs=false&spaces_required=1&star_sitter=false&start_date=2026-06-28&search_score_debug=false&injected_medication=false&search_current_provider=false&in_unlaunched_country=false&special_needs=false&oral_medication=false&more_than_one_client=false&uncrated_dogs=false&unspayed_females=false&non_neutered_males=false&females_in_heat=false&premier_matching=false&premier_or_rover_match=false&is_member_of_sitter_to_sitter=false&is_member_of_sitter_to_sitter_plus=false&is_accepting_new_recurring_clients=false&has_low_booking_rate=false&location_type=zip-code&change_source=search-modal&dog_size=medium&dog_count=2&cat_count=0&puppy_count=0"),
+    ("78723", "Windsor Park", "https://www.rover.com/search/?alternate_results=true&accepts_only_one_client=false&apse=false&bathing_grooming=false&cat_care=false&centerlat=30.3081307&centerlng=-97.68194299999999&dogs_allowed_on_bed=false&dogs_allowed_on_furniture=false&end_date=2026-06-29&frequency=onetime&morning_availability=false&midday_availability=false&evening_availability=false&fulltime_availability=true&monday=false&tuesday=false&wednesday=false&thursday=false&friday=false&saturday=false&sunday=false&giant_dogs=false&has_fenced_yard=false&has_house=false&has_no_children=false&in_sitters_home=true&is_initial_search=false&is_premier=false&knows_first_aid=false&large_dogs=false&location=Austin%2C%20TX%2078723%2C%20USA&location_accuracy=5161&medium_dogs=true&minprice=1&no_caged_pets=false&no_cats=false&no_children_0_5=false&no_children_6_12=false&non_smoking=false&page=1&person_does_not_have_dogs=false&pet=&petsitusa=false&pet_type=dog&puppy=false&raw_location_types=postal_code&service_type=overnight-boarding&small_dogs=false&spaces_required=1&star_sitter=false&start_date=2026-06-28&search_score_debug=false&injected_medication=false&search_current_provider=false&in_unlaunched_country=false&special_needs=false&oral_medication=false&more_than_one_client=false&uncrated_dogs=false&unspayed_females=false&non_neutered_males=false&females_in_heat=false&premier_matching=false&premier_or_rover_match=false&is_member_of_sitter_to_sitter=false&is_member_of_sitter_to_sitter_plus=false&is_accepting_new_recurring_clients=false&has_low_booking_rate=false&location_type=zip-code&change_source=search-modal&dog_size=medium&dog_count=2&cat_count=0&puppy_count=0"),
+    ("78701", "Downtown", "https://www.rover.com/search/?alternate_results=true&accepts_only_one_client=false&apse=false&bathing_grooming=false&cat_care=false&centerlat=30.2729209&centerlng=-97.74438630000002&dogs_allowed_on_bed=false&dogs_allowed_on_furniture=false&end_date=2026-06-29&frequency=onetime&morning_availability=false&midday_availability=false&evening_availability=false&fulltime_availability=true&monday=false&tuesday=false&wednesday=false&thursday=false&friday=false&saturday=false&sunday=false&giant_dogs=false&has_fenced_yard=false&has_house=false&has_no_children=false&in_sitters_home=true&is_initial_search=false&is_premier=false&knows_first_aid=false&large_dogs=false&location=78701&medium_dogs=true&minprice=1&no_caged_pets=false&no_cats=false&no_children_0_5=false&no_children_6_12=false&non_smoking=false&page=1&person_does_not_have_dogs=false&pet=&petsitusa=false&pet_type=dog&puppy=false&raw_location_types=postal_code&service_type=overnight-boarding&small_dogs=false&spaces_required=1&star_sitter=false&start_date=2026-06-28&search_score_debug=false&injected_medication=false&search_current_provider=false&in_unlaunched_country=false&special_needs=false&oral_medication=false&more_than_one_client=false&uncrated_dogs=false&unspayed_females=false&non_neutered_males=false&females_in_heat=false&premier_matching=false&premier_or_rover_match=false&is_member_of_sitter_to_sitter=false&is_member_of_sitter_to_sitter_plus=false&is_accepting_new_recurring_clients=false&has_low_booking_rate=false&location_type=zip-code&change_source=search-modal&dog_size=medium&dog_count=2&cat_count=0&puppy_count=0"),
+    ("78757", "Crestview", "https://www.rover.com/search/?alternate_results=true&accepts_only_one_client=false&apse=false&bathing_grooming=false&cat_care=false&centerlat=30.3568213&centerlng=-97.730807&dogs_allowed_on_bed=false&dogs_allowed_on_furniture=false&end_date=2026-06-29&frequency=onetime&morning_availability=false&midday_availability=false&evening_availability=false&fulltime_availability=true&monday=false&tuesday=false&wednesday=false&thursday=false&friday=false&saturday=false&sunday=false&giant_dogs=false&has_fenced_yard=false&has_house=false&has_no_children=false&in_sitters_home=true&is_initial_search=false&is_premier=false&knows_first_aid=false&large_dogs=false&location=78757&medium_dogs=true&minprice=1&no_caged_pets=false&no_cats=false&no_children_0_5=false&no_children_6_12=false&non_smoking=false&page=1&person_does_not_have_dogs=false&pet=&petsitusa=false&pet_type=dog&puppy=false&raw_location_types=postal_code&service_type=overnight-boarding&small_dogs=false&spaces_required=1&star_sitter=false&start_date=2026-06-28&search_score_debug=false&injected_medication=false&search_current_provider=false&in_unlaunched_country=false&special_needs=false&oral_medication=false&more_than_one_client=false&uncrated_dogs=false&unspayed_females=false&non_neutered_males=false&females_in_heat=false&premier_matching=false&premier_or_rover_match=false&is_member_of_sitter_to_sitter=false&is_member_of_sitter_to_sitter_plus=false&is_accepting_new_recurring_clients=false&has_low_booking_rate=false&location_type=zip-code&change_source=search-modal&dog_size=medium&dog_count=2&cat_count=0&puppy_count=0"),
+    ("78751", "Hyde Park", "https://www.rover.com/search/?alternate_results=true&accepts_only_one_client=false&apse=false&bathing_grooming=false&cat_care=false&centerlat=30.3055711&centerlng=-97.725376&dogs_allowed_on_bed=false&dogs_allowed_on_furniture=false&end_date=2026-06-29&frequency=onetime&morning_availability=false&midday_availability=false&evening_availability=false&fulltime_availability=true&monday=false&tuesday=false&wednesday=false&thursday=false&friday=false&saturday=false&sunday=false&giant_dogs=false&has_fenced_yard=false&has_house=false&has_no_children=false&in_sitters_home=true&is_initial_search=false&is_premier=false&knows_first_aid=false&large_dogs=false&location=78751&medium_dogs=true&minprice=1&no_caged_pets=false&no_cats=false&no_children_0_5=false&no_children_6_12=false&non_smoking=false&page=1&person_does_not_have_dogs=false&pet=&petsitusa=false&pet_type=dog&puppy=false&raw_location_types=postal_code&service_type=overnight-boarding&small_dogs=false&spaces_required=1&star_sitter=false&start_date=2026-06-28&search_score_debug=false&injected_medication=false&search_current_provider=false&in_unlaunched_country=false&special_needs=false&oral_medication=false&more_than_one_client=false&uncrated_dogs=false&unspayed_females=false&non_neutered_males=false&females_in_heat=false&premier_matching=false&premier_or_rover_match=false&is_member_of_sitter_to_sitter=false&is_member_of_sitter_to_sitter_plus=false&is_accepting_new_recurring_clients=false&has_low_booking_rate=false&location_type=zip-code&change_source=search-modal&dog_size=medium&dog_count=2&cat_count=0&puppy_count=0"),
 ]
 
 RATE_RE = re.compile(r"\$\s?(\d{1,4})\s*(?:/|per\s+)\s*night", re.I)
 
-# climb from each "night" text node to the card-sized block so it includes the name
+# Get the WHOLE card block (name + rating + rate), not just the price line.
+# Rover wraps each result card in one <a> to the sitter profile, so the card-level
+# anchor is the reliable container. Fall back to climbing if there's no such anchor.
 JS_CARD = """
 els => els.map(e => {
-  let n = e;
-  for (let k = 0; k < 6 && n.parentElement; k++) {
-    const t = n.innerText || '';
-    if (t.length > 40 && /night/i.test(t)) break;
-    n = n.parentElement;
+  const a = e.closest('a');
+  if (a) {
+    const t = a.innerText || '';
+    if (/per\\s+night/i.test(t) && t.length < 600) return t;  // single card
   }
-  return n.innerText || n.textContent || '';
+  let n = e;
+  for (let k = 0; k < 8 && n.parentElement; k++) {
+    n = n.parentElement;
+    const t = n.innerText || '';
+    if (/per\\s+night/i.test(t) && t.length > 80) return t;
+  }
+  return (n.innerText || n.textContent || '');
 })
 """
 
@@ -93,23 +93,42 @@ def build_url(template, start, end):
     return re.sub(r"(?<=[?&])page=\d+", "page=1", u)
 
 
+_BADGES = {"star sitter", "premier", "featured", "sponsored", "new", "verified enhanced background check"}
+
+
+def card_name(block):
+    """Best-effort sitter name = first plausible line of the card block."""
+    for line in block.splitlines():
+        s = line.strip()
+        low = s.lower()
+        if not s or low in _BADGES:
+            continue
+        if low.startswith("from $") or s.startswith("$"):
+            continue
+        if re.match(r"^[\d.]+(\s|$|\u00b7)", s):   # rating line like "5.0 ·"
+            continue
+        return s
+    return "(name?)"
+
+
 def extract_cards(page):
+    """Return (price, name, normalized_text) per card, in display order."""
     blocks = page.eval_on_selector_all(
         "xpath=//*[not(self::script) and not(self::style)]"
         "[contains(translate(text(),'NIGHT','night'),'night')]",
         JS_CARD,
     )
     cards, seen = [], set()
-    for text in blocks:
-        text = " ".join((text or "").split())
-        m = RATE_RE.search(text)
+    for raw in blocks:
+        norm = " ".join((raw or "").split())
+        m = RATE_RE.search(norm)
         if not m:
             continue
-        key = text[:80]
+        key = norm[:80]            # now name-prefixed, so distinct sitters stay distinct
         if key in seen:
             continue
         seen.add(key)
-        cards.append((int(m.group(1)), text))
+        cards.append((int(m.group(1)), card_name(raw or ""), norm))
     return cards
 
 
@@ -245,25 +264,29 @@ def main():
     results, pooled = [], []
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=HEADLESS)
-        page = browser.new_context(user_agent=UA).new_page()
         for i, (z, hood, template) in enumerate(configured):
+            # fresh context per zip = fresh cookies/session, so a "challenged" flag
+            # from one zip doesn't ride along into the next (a clean first-visit each time)
+            context = browser.new_context(user_agent=UA)
+            page = context.new_page()
             cards = fetch_zip(page, z, build_url(template, start, end), DEBUG_VERIFY)
+            context.close()
             if cards is None:
                 results.append({"zip": z, "hood": hood, "status": "fail",
                                 "rank": None, "median": None, "n": 0})
             else:
-                prices = [pr for pr, _ in cards]
-                rank = next((j for j, (_, t) in enumerate(cards, 1)
-                             if MY_SITTER_NAME.lower() in t.lower()), None)
+                prices = [pr for pr, _, _ in cards]
+                rank = next((j for j, (_, _nm, norm) in enumerate(cards, 1)
+                             if MY_SITTER_NAME.lower() in norm.lower()), None)
                 results.append({"zip": z, "hood": hood, "status": "ok", "rank": rank,
                                 "median": statistics.median(prices) if prices else None,
                                 "n": len(prices)})
                 pooled.extend(prices)
                 if DEBUG_VERIFY:
                     print(f"\n[{z} {hood}]")
-                    for j, (price, text) in enumerate(cards, 1):
+                    for j, (price, name, norm) in enumerate(cards, 1):
                         mark = "  <-- YOU" if rank == j else ""
-                        print(f"  #{j:>2}  ${price:>4}  {text[:55]}{mark}")
+                        print(f"  #{j:>2}  ${price:>4}  {name[:24]:<24} | {norm[:45]}{mark}")
             if i < len(configured) - 1:
                 time.sleep(random.uniform(*DELAY))
         browser.close()
