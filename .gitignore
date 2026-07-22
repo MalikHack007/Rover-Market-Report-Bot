@@ -1,9 +1,9 @@
-.venv
-.env
+.venv/
+.env.*
 
 credentials.json
 token_send.json
-.csv
-.png
+*.csv
+*.png
 
 
