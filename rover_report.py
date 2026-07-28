@@ -41,11 +41,15 @@ from googleapiclient.discovery import build
 MY_SITTER_NAME = "Yujie Z."   # exactly as Rover shows it, e.g. "Malik Z."
 EMAIL_TO = "malikzhangggg@gmail.com"                  # report recipient (your own inbox)
 HEADLESS = True
-DEBUG_VERIFY = True   # set True for ONE run to dump card order + save all screenshots,
+DEBUG_VERIFY = False   # set True for ONE run to dump card order + save all screenshots,
                        # so you can confirm the rank match; leave False for normal runs.
 DELAY = (45.0, 120.0)  # seconds between zip fetches -- minutes-scale spacing is the
                        # main lever against Cloudflare's burst detection. Widen if needed;
                        # a daily report doesn't care that the run takes several minutes.
+GOTO_RETRIES = 3           # load attempts per zip before giving up on it.
+                           # (Was effectively 1 and UNGUARDED -> a single goto timeout
+                           #  crashed the whole run and suppressed the email, 2026-07-27.)
+GOTO_BACKOFF = (5.0, 15.0) # seconds (jittered) to wait between load retries
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCOPES = ["https://www.googleapis.com/auth/gmail.send"]
 UA = (
@@ -133,15 +137,35 @@ def extract_cards(page):
 
 
 def fetch_zip(page, z, url, force_shot):
-    page.goto(url, wait_until="domcontentloaded", timeout=60000)
-    try:
-        page.wait_for_selector("text=/night/i", timeout=30000)
-    except PWTimeout:
-        page.screenshot(path=os.path.join(HERE, f"shot_{z}.png"), full_page=True)  # on failure
-        return None
+    """Load one zip's page-1 search and return its cards.
+
+    Returns a list of (price, name, norm), or None if the zip couldn't be loaded
+    after GOTO_RETRIES attempts. NEVER raises: a single flaky zip (goto timeout,
+    Cloudflare stall, no results) must degrade to a "fetch failed" row, not abort
+    the whole report. The unguarded goto here is what killed the 2026-07-27 run.
+    """
+    for attempt in range(1, GOTO_RETRIES + 1):
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            page.wait_for_selector("text=/night/i", timeout=30000)
+            break  # page loaded and results are present
+        except PWTimeout as e:
+            print(f"  [{z}] load timeout on attempt {attempt}/{GOTO_RETRIES}: {e}")
+            if attempt < GOTO_RETRIES:
+                page.wait_for_timeout(int(random.uniform(*GOTO_BACKOFF) * 1000))
+                continue
+            # Give up on THIS zip only; capture evidence for later inspection.
+            try:
+                page.screenshot(path=os.path.join(HERE, f"shot_{z}.png"), full_page=True)
+            except Exception:
+                pass
+            return None
     page.wait_for_timeout(2000)
     if force_shot:
-        page.screenshot(path=os.path.join(HERE, f"shot_{z}.png"), full_page=True)
+        try:
+            page.screenshot(path=os.path.join(HERE, f"shot_{z}.png"), full_page=True)
+        except Exception:
+            pass
     return extract_cards(page)
 
 
@@ -269,8 +293,15 @@ def main():
             # from one zip doesn't ride along into the next (a clean first-visit each time)
             context = browser.new_context(user_agent=UA)
             page = context.new_page()
-            cards = fetch_zip(page, z, build_url(template, start, end), DEBUG_VERIFY)
-            context.close()
+            try:
+                cards = fetch_zip(page, z, build_url(template, start, end), DEBUG_VERIFY)
+            except Exception as e:
+                # fetch_zip is designed not to raise, but if anything unexpected
+                # slips through, this ONE zip fails instead of the whole run.
+                print(f"  [{z}] unexpected error, skipping zip: {e}")
+                cards = None
+            finally:
+                context.close()
             if cards is None:
                 results.append({"zip": z, "hood": hood, "status": "fail",
                                 "rank": None, "median": None, "n": 0})
