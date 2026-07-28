@@ -1,0 +1,10 @@
+# Runtime
+python-dotenv>=1.0
+beautifulsoup4>=4.12
+google-api-python-client>=2.100
+google-auth>=2.23
+google-auth-oauthlib>=1.1
+google-cloud-pubsub>=2.18
+
+# Dev/test
+pytest>=7.4
