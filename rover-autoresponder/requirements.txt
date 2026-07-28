@@ -5,6 +5,7 @@ google-api-python-client>=2.100
 google-auth>=2.23
 google-auth-oauthlib>=1.1
 google-cloud-pubsub>=2.18
+anthropic>=0.39
 
 # Dev/test
 pytest>=7.4

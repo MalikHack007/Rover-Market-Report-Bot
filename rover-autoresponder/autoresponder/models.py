@@ -13,4 +13,5 @@ class ParsedMessage:
     stay_end: Optional[str]
     message_text: Optional[str]
     raw_subject: str = ""
-    recognized: bool = True    # False → email format didn't match; stored for review
+    recognized: bool = True    # False → subject matched no known pattern
+    kind: str = "other"        # "inquiry" (draft) | "confirmed" | "other" (no action)

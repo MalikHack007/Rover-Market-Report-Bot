@@ -103,3 +103,51 @@ def set_meta(conn: sqlite3.Connection, key: str, value) -> None:
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                 (key, str(value)),
             )
+
+
+# --- Phase 2: thread state for the drafter ---
+def get_thread(conn: sqlite3.Connection, thread_key: str):
+    """Return (owner_name, pet_name, stay_dates, stage, status) or None."""
+    with _LOCK:
+        cur = conn.execute(
+            "SELECT owner_name, pet_name, stay_dates, stage, status "
+            "FROM threads WHERE thread_key=?",
+            (thread_key,),
+        )
+        return cur.fetchone()
+
+
+def get_thread_messages(conn: sqlite3.Connection, thread_key: str):
+    """All non-empty inbound message texts for a thread, oldest first."""
+    with _LOCK:
+        cur = conn.execute(
+            "SELECT text FROM messages WHERE thread_key=? ORDER BY id",
+            (thread_key,),
+        )
+        return [r[0] for r in cur.fetchall() if r[0]]
+
+
+def update_thread_stage(conn: sqlite3.Connection, thread_key: str, stage: str) -> None:
+    with _LOCK, conn:
+        conn.execute(
+            "UPDATE threads SET stage=?, updated_at=datetime('now') WHERE thread_key=?",
+            (stage, thread_key),
+        )
+
+
+def set_last_draft(conn: sqlite3.Connection, thread_key: str, draft_text: str) -> None:
+    with _LOCK, conn:
+        conn.execute(
+            "UPDATE threads SET last_draft_text=?, updated_at=datetime('now') "
+            "WHERE thread_key=?",
+            (draft_text, thread_key),
+        )
+
+
+def set_thread_status(conn: sqlite3.Connection, thread_key: str, status: str) -> None:
+    """Terminal states 'converted'/'not_suitable' stop future drafting (Phase 4 sets these)."""
+    with _LOCK, conn:
+        conn.execute(
+            "UPDATE threads SET status=?, updated_at=datetime('now') WHERE thread_key=?",
+            (status, thread_key),
+        )

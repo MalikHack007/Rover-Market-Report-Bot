@@ -25,21 +25,29 @@ from bs4 import BeautifulSoup
 
 from .models import ParsedMessage
 
-# Each entry: (compiled subject regex, function mapping match -> {owner, pet?, start?}).
-# Patterns are tried in order; first match wins. Add a new tuple here whenever a
-# new Rover subject template shows up (unrecognized ones are logged, not dropped).
+# Each entry: (regex, match->fields fn, KIND). Tried in order; first match wins.
+#   kind="inquiry"   -> a NEW client request: draft it (multi-turn until terminal).
+#   kind="confirmed" -> an already-confirmed booking's thread: no action.
+# Any subject that matches NOTHING here is treated as kind="other" == no action,
+# so we err toward NOT drafting on unfamiliar formats.
 SUBJECT_PATTERNS = [
-    # "New message from Vatsal about Gypsy's stay"
+    # CONFIRMED booking thread: "New message from Minyoung about Captain's stay"
     (re.compile(r"New message from (.+?) about (.+?)['\u2019]s stay", re.IGNORECASE),
-     lambda m: {"owner": m.group(1).strip(), "pet": m.group(2).strip()}),
-    # "Yisell sent you a new message about a booking starting 07/28/2026"
-    (re.compile(r"^(.+?) sent you a (?:new )?message about a booking "
+     lambda m: {"owner": m.group(1).strip(), "pet": m.group(2).strip()},
+     "confirmed"),
+    # NEW INQUIRY (single date): "<owner> sent you a new message about a booking
+    # starting MM/DD/YYYY".  <owner> may hold multiple names ("Ezekiel & Janice").
+    (re.compile(r"^(.+?) sent you a (?:new )?message about "
+                r"(?:a booking|a stay|bookings|stays) "
                 r"starting (\d{1,2}/\d{1,2}/\d{4})", re.IGNORECASE),
-     lambda m: {"owner": m.group(1).strip(), "start": m.group(2)}),
-    # defensive: "... sent you a message about a stay starting/from MM/DD/YYYY"
-    (re.compile(r"^(.+?) sent you a (?:new )?message about a stay "
-                r"(?:starting|from) (\d{1,2}/\d{1,2}/\d{4})", re.IGNORECASE),
-     lambda m: {"owner": m.group(1).strip(), "start": m.group(2)}),
+     lambda m: {"owner": m.group(1).strip(), "start": m.group(2)},
+     "inquiry"),
+    # NEW INQUIRY (date range): "... about a booking/stay from MM/DD/YYYY to MM/DD/YYYY"
+    (re.compile(r"^(.+?) sent you a (?:new )?message about "
+                r"(?:a booking|a stay) from (\d{1,2}/\d{1,2}/\d{4}) to "
+                r"(\d{1,2}/\d{1,2}/\d{4})", re.IGNORECASE),
+     lambda m: {"owner": m.group(1).strip(), "start": m.group(2), "end": m.group(3)},
+     "inquiry"),
 ]
 
 # A date range in the body, e.g. "stay from 08/26/2025 to 08/28/2025".
@@ -112,18 +120,21 @@ def parse_notification(subject: str, body_text: str,
 
     owner = pet = start = end = None
     subject_ok = False
+    kind = "other"  # default: unfamiliar subject -> no action
 
-    for rx, extract in SUBJECT_PATTERNS:
+    for rx, extract, pat_kind in SUBJECT_PATTERNS:
         m = rx.search(subject)
         if m:
             fields = extract(m)
             owner = fields.get("owner")
             pet = fields.get("pet")
             start = fields.get("start")
+            end = fields.get("end")
+            kind = pat_kind
             subject_ok = True
             break
 
-    # Supplement with a date range from the body if present (older "stay" emails).
+    # Supplement with a date range from the body if present.
     md = DATES_RANGE_RE.search(body)
     if md:
         start = start or md.group(1)
@@ -141,4 +152,5 @@ def parse_notification(subject: str, body_text: str,
         message_text=message,
         raw_subject=subject,
         recognized=bool(subject_ok and message),
+        kind=kind,
     )

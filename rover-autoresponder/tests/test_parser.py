@@ -89,3 +89,96 @@ def test_extract_text_prefers_plain_over_html():
     text = extract_text_from_payload(payload)
     assert "PLAIN" in text
     assert "HTML version" not in text
+
+
+def test_new_message_about_a_booking():
+    # Real subject captured 2026-07-27 (a booking-message notification).
+    subj = "Yisell sent you a new message about a booking starting 07/28/2026"
+    body = "Hi there,\nYisell says:\nHi Onel, can you watch our baby Milo?\nReply now\n"
+    pm = parse_notification(subj, body, "m10", "t10")
+    assert pm.owner_name == "Yisell"
+    assert pm.stay_start == "07/28/2026"
+    assert pm.message_text == "Hi Onel, can you watch our baby Milo?"
+    assert pm.recognized is True
+    # pet isn't in this subject template; that's fine
+    assert pm.pet_name is None
+
+
+def test_booking_message_generic_says_fallback():
+    # Even if the "owner says:" line is absent, generic says:/Reply now still works.
+    subj = "Yisell sent you a new message about a booking starting 07/28/2026"
+    body = "says:\nHi Onel, can you watch our baby Milo?\nReply now"
+    pm = parse_notification(subj, body, "m11", "t11")
+    assert pm.owner_name == "Yisell"
+    assert pm.recognized is True
+
+
+# --- Real Yisell thread captured 2026-07-27 (two messages, one thread) ---
+_YISELL_SUBJ = "Yisell sent you a new message about a booking starting 07/28/2026"
+
+def test_yisell_freeform_message_real_body():
+    body = (
+        "Hi Yujie,\n"
+        "Yisell sent you a message about a stay starting 07/28/2026.\n"
+        "Yisell says:\n"
+        "Hi Onel, can you watch our baby Milo?\n"
+        "Reply now\n"
+        "Book this stay\n"
+        "Remember, all services booked through Rover are covered by the Rover Guarantee.\n"
+    )
+    pm = parse_notification(_YISELL_SUBJ, body, "y1", "yt1")
+    assert pm.owner_name == "Yisell"
+    assert pm.stay_start == "07/28/2026"
+    assert pm.message_text == "Hi Onel, can you watch our baby Milo?"
+    assert pm.recognized is True
+
+def test_yisell_structured_booking_request_message_real_body():
+    # The auto-sent "Boarding Request" summary arrives as a MESSAGE, same template.
+    body = (
+        "Hi Yujie,\n"
+        "Yisell sent you a message about a stay starting 07/28/2026.\n"
+        "Yisell says:\n"
+        "Boarding Request - One Time:\n"
+        "Drop-off: Tue, Jul 28 at 9:00 AM - 9:00 AM\n"
+        "Pick-up: Wed, Jul 29 at 9:00 AM - 9:00 AM\n"
+        "Reply now\n"
+        "Book this stay\n"
+    )
+    pm = parse_notification(_YISELL_SUBJ, body, "y2", "yt1")
+    assert pm.owner_name == "Yisell"
+    assert pm.recognized is True
+    assert pm.message_text.startswith("Boarding Request - One Time:")
+    assert "Drop-off: Tue, Jul 28" in pm.message_text
+    assert "Pick-up: Wed, Jul 29" in pm.message_text
+    # "Reply now" / "Book this stay" must NOT bleed into the captured message
+    assert "Reply now" not in pm.message_text
+    assert "Book this stay" not in pm.message_text
+
+
+# --- subject kind classification (new-inquiry vs confirmed vs other) ---
+def test_kind_inquiry_singular():
+    subj = "Hyejin sent you a new message about a booking starting 07/28/2026"
+    body = "Hyejin says:\nWill you be available to host Daisy(boy) for day care tomorrow?\nReply now"
+    pm = parse_notification(subj, body, "k1", "kt1")
+    assert pm.kind == "inquiry"
+    assert pm.owner_name == "Hyejin"
+    assert pm.stay_start == "07/28/2026"
+
+def test_kind_inquiry_multi_owner_and_dog():
+    subj = "Ezekiel & Janice sent you a new message about a booking starting 08/30/2026"
+    body = "Ezekiel & Janice says:\nWill you be available to sit Rusty & Osha on Aug 30-Sep 7?\nReply now"
+    pm = parse_notification(subj, body, "k2", "kt2")
+    assert pm.kind == "inquiry"
+    assert pm.owner_name == "Ezekiel & Janice"
+    assert pm.stay_start == "08/30/2026"
+    assert "Rusty & Osha" in pm.message_text
+
+def test_kind_confirmed_is_not_drafted():
+    subj = "New message from Minyoung about Captain's stay"
+    body = "Minyoung says:\nWhat time should I drop off?\nReply now"
+    pm = parse_notification(subj, body, "k3", "kt3")
+    assert pm.kind == "confirmed"
+
+def test_kind_other_for_unfamiliar_subject():
+    pm = parse_notification("Your Rover payout is on the way", "some body", "k4", "kt4")
+    assert pm.kind == "other"

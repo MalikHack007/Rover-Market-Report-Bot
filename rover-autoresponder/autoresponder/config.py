@@ -24,6 +24,16 @@ WATCH_LABEL_IDS = ["INBOX"]
 DB_PATH = os.environ.get("DB_PATH", "./rover_autoresponder.db")
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 
+# --- Phase 2: LLM drafter (Anthropic) ---
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")   # SDK also reads this
+ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5")
+DRAFT_MAX_TOKENS = int(os.environ.get("DRAFT_MAX_TOKENS", "1024"))
+SITTER_NAME = os.environ.get("SITTER_NAME", "")               # e.g. how clients address you
+DEBOUNCE_SECONDS = int(os.environ.get("DEBOUNCE_SECONDS", "45"))  # coalesce a burst into 1 draft
+_HERE = os.path.dirname(__file__)
+PLAYBOOK_PATH = os.environ.get("PLAYBOOK_PATH", os.path.join(_HERE, "playbook.md"))
+FAQ_PATH = os.environ.get("FAQ_PATH", os.path.join(_HERE, "faq.md"))  # optional; loaded if present
+
 
 def topic_path() -> str:
     return f"projects/{GCP_PROJECT_ID}/topics/{PUBSUB_TOPIC}"
