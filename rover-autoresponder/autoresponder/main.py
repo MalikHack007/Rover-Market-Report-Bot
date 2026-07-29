@@ -81,15 +81,23 @@ def draft_thread(conn, thread_key: str) -> None:
         log.exception("  draft failed for thread %s", thread_key)
         return
 
+    # Phase 3: also deliver to Telegram (send-only). No-op if TELEGRAM_* unset.
+    from . import telegram_notify
+
     store.update_thread_stage(conn, thread_key, d.stage)
     if d.off_playbook:
         log.warning("  OFF-PLAYBOOK [%s] flags=%s (no draft) — needs your attention",
                     d.stage, d.flags)
+        telegram_notify.send_message(
+            telegram_notify.format_offplaybook_card(owner, d.flags, history))
         return
     store.set_last_draft(conn, thread_key, d.draft_text)
     flag_note = f" flags={d.flags}" if d.flags else ""
     log.info("  DRAFT [%s]%s (from %d msg) \n----- draft -----\n%s\n-----------------",
              d.stage, flag_note, len(history), d.draft_text)
+    # Phase 3: push the draft card to Telegram for tap-to-copy.
+    telegram_notify.send_message(
+        telegram_notify.format_draft_card(owner, dates, d.stage, d.flags, history, d.draft_text))
 
 
 def handle_notification(service, conn, schedule_draft, email_address: str,

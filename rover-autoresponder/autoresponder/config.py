@@ -24,6 +24,10 @@ WATCH_LABEL_IDS = ["INBOX"]
 DB_PATH = os.environ.get("DB_PATH", "./rover_autoresponder.db")
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 
+# --- Phase 3: Telegram delivery (send-only) ---
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")   # from @BotFather
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")       # your numeric chat id
+
 # --- Phase 2: LLM drafter (Anthropic) ---
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")   # SDK also reads this
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5")
