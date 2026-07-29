@@ -10,6 +10,7 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError  # Phase 3 fix: catch 404s from get_message
 
 from . import config
 from .parser import extract_text_from_payload
@@ -58,6 +59,7 @@ def list_history(service, start_history_id: str):
                 userId="me",
                 startHistoryId=start_history_id,
                 historyTypes=["messageAdded"],
+                labelId="INBOX",  # Phase 3 fix: match the INBOX watch; drop non-inbox phantoms
                 pageToken=page_token,
             )
             .execute()
@@ -76,8 +78,21 @@ def list_history(service, start_history_id: str):
     return out
 
 
-def get_message(service, msg_id: str) -> dict:
-    return service.users().messages().get(userId="me", id=msg_id, format="full").execute()
+def get_message(service, msg_id: str):
+    """Fetch a full message, or return None if it's gone (404).
+
+    Phase 3 fix: history.list can reference a message that has since been deleted
+    or moved; fetching it 404s. That's expected in Gmail sync — skip it, don't crash.
+    """
+    try:
+        return service.users().messages().get(
+            userId="me", id=msg_id, format="full"
+        ).execute()
+    except HttpError as e:
+        if getattr(e, "resp", None) is not None and e.resp.status == 404:
+            log.info("message %s not found (deleted/moved); skipping", msg_id)
+            return None
+        raise
 
 
 def extract_fields(msg: dict):

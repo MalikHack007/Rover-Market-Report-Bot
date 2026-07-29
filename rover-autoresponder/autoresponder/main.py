@@ -29,6 +29,11 @@ def process_message_id(service, conn, schedule_draft, msg_id: str) -> None:
         log.debug("skip already-seen %s", msg_id)
         return
     msg = gmail_client.get_message(service, msg_id)
+    # Phase 3 fix: history referenced a message that's gone (404 -> None).
+    # Tombstone it so a duplicate push doesn't re-fetch it, then skip.
+    if msg is None:
+        store.mark_seen(conn, msg_id)
+        return
     subject, body_text, thread_id = gmail_client.extract_fields(msg)
     pm = parse_notification(subject, body_text, gmail_msg_id=msg_id, thread_key=thread_id)
     if not store.record_message(conn, pm):

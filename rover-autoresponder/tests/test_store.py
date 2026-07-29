@@ -40,3 +40,14 @@ def test_meta_roundtrip(tmp_path):
     assert store.get_meta(conn, "last_history_id") == "12345"
     store.set_meta(conn, "last_history_id", "67890")
     assert store.get_meta(conn, "last_history_id") == "67890"
+
+
+def test_mark_seen_tombstones_id(tmp_path):
+    conn = store.init_db(str(tmp_path / "t.db"))
+    assert store.already_seen(conn, "gone1") is False
+    store.mark_seen(conn, "gone1")
+    assert store.already_seen(conn, "gone1") is True
+    # idempotent: marking again doesn't error or duplicate
+    store.mark_seen(conn, "gone1")
+    n = conn.execute("SELECT COUNT(*) FROM messages WHERE gmail_msg_id='gone1'").fetchone()[0]
+    assert n == 1

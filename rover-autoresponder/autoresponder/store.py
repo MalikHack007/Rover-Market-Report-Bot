@@ -151,3 +151,14 @@ def set_thread_status(conn: sqlite3.Connection, thread_key: str, status: str) ->
             "UPDATE threads SET status=?, updated_at=datetime('now') WHERE thread_key=?",
             (status, thread_key),
         )
+
+
+# --- Phase 3 fix: tombstone an unfetchable message id so duplicate Gmail pushes
+#     (at-least-once delivery) don't keep re-fetching a message that 404s. ---
+def mark_seen(conn: sqlite3.Connection, gmail_msg_id: str) -> None:
+    with _LOCK, conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO messages (thread_key, gmail_msg_id, text) "
+            "VALUES (?, ?, ?)",
+            (None, gmail_msg_id, None),
+        )
