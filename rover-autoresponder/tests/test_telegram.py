@@ -29,35 +29,41 @@ def test_offplaybook_card_has_no_draft():
     assert "3:30" in card
 
 
-def test_send_disabled_returns_false(monkeypatch):
-    monkeypatch.setattr(config, "TELEGRAM_BOT_TOKEN", "")
-    monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "")
-    assert tg.send_message("hi") is False
-
 
 class _Resp:
-    def __init__(self, code, text=""): self.status_code = code; self.text = text
+    def __init__(self, code, payload=None):
+        self.status_code = code
+        self._payload = payload or {}
+        self.text = ""
+    def json(self):
+        return self._payload
 
 
-def test_send_posts_correct_payload(monkeypatch):
+def test_send_disabled_returns_none(monkeypatch):
+    monkeypatch.setattr(config, "TELEGRAM_BOT_TOKEN", "")
+    monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "")
+    assert tg.send_message("hi") is None
+
+
+def test_send_posts_correct_payload_and_returns_message_id(monkeypatch):
     monkeypatch.setattr(config, "TELEGRAM_BOT_TOKEN", "TOKEN123")
     monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "555")
     captured = {}
     def fake_post(url, json, timeout):
         captured["url"] = url; captured["json"] = json
-        return _Resp(200)
+        return _Resp(200, {"result": {"message_id": 42}})
     monkeypatch.setattr(tg.requests, "post", fake_post)
 
-    ok = tg.send_message("<b>hello</b>")
-    assert ok is True
+    mid = tg.send_message("<b>hello</b>", reply_markup={"inline_keyboard": []})
+    assert mid == 42
     assert "TOKEN123" in captured["url"] and captured["url"].endswith("/sendMessage")
     assert captured["json"]["chat_id"] == "555"
     assert captured["json"]["parse_mode"] == "HTML"
-    assert captured["json"]["text"] == "<b>hello</b>"
+    assert captured["json"]["reply_markup"] == {"inline_keyboard": []}
 
 
-def test_send_non_200_returns_false(monkeypatch):
+def test_send_non_200_returns_none(monkeypatch):
     monkeypatch.setattr(config, "TELEGRAM_BOT_TOKEN", "T")
     monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "1")
-    monkeypatch.setattr(tg.requests, "post", lambda url, json, timeout: _Resp(400, "bad request"))
-    assert tg.send_message("x") is False
+    monkeypatch.setattr(tg.requests, "post", lambda url, json, timeout: _Resp(400))
+    assert tg.send_message("x") is None

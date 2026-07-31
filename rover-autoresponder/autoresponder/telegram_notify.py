@@ -1,11 +1,7 @@
-"""Phase 3: deliver drafts to Telegram (SEND-ONLY).
+"""Telegram delivery + interactive controls (Phase 3 send, Phase 4 buttons).
 
-Uses the raw Telegram Bot API over HTTP (requests) rather than python-telegram-bot,
-to keep the whole service synchronous (Pub/Sub streaming pull + SQLite + debouncer
-are all sync). Phase 4 will add a synchronous getUpdates long-poll here for buttons.
-
-Drafts are sent to a single chat (yours) formatted for tap-to-copy: the reply sits
-in a <pre> block, which Telegram renders with a copy button on mobile.
+Raw Telegram Bot API over HTTP to keep the service synchronous. Sending lives here;
+the receive side (getUpdates long-poll) is in telegram_poll.py.
 """
 import html
 import logging
@@ -17,7 +13,14 @@ from . import config
 log = logging.getLogger(__name__)
 
 _API = "https://api.telegram.org/bot{token}/{method}"
-_MAX_MSG_CHARS = 500      # cap each quoted client message so the card stays under Telegram's 4096
+_MAX_MSG_CHARS = 500
+
+# Phase 4: inline-button layout. callback_data is "<action>:<thread_key>" (< 64 bytes).
+_BUTTONS = [
+    [("✅ Mark sent", "sent"), ("🔁 Regenerate", "regen")],
+    [("☀️ Warmer", "warm"), ("✂️ Shorter", "short")],
+    [("🎉 Converted", "conv"), ("🚫 Not suitable", "unfit")],
+]
 
 
 def enabled() -> bool:
@@ -25,16 +28,25 @@ def enabled() -> bool:
 
 
 def _esc(s) -> str:
-    """Escape text placed inside Telegram HTML tags (& < > matter for owners/dogs like 'Rusty & Osha')."""
     return html.escape(s or "", quote=False)
 
 
 def _quote_messages(history) -> list:
     out = []
-    for m in history[-6:]:                       # last few messages only
+    for m in history[-6:]:
         text = m if len(m) <= _MAX_MSG_CHARS else m[:_MAX_MSG_CHARS] + "…"
         out.append("<blockquote>" + _esc(text) + "</blockquote>")
     return out
+
+
+def build_keyboard(thread_key: str) -> dict:
+    """Phase 4: inline keyboard whose buttons carry the thread key."""
+    return {
+        "inline_keyboard": [
+            [{"text": t, "callback_data": f"{a}:{thread_key}"} for t, a in row]
+            for row in _BUTTONS
+        ]
+    }
 
 
 def format_draft_card(owner, dates, stage, flags, history, draft_text) -> str:
@@ -60,26 +72,58 @@ def format_offplaybook_card(owner, flags, history) -> str:
     return "\n".join(lines)
 
 
-def send_message(text, parse_mode="HTML") -> bool:
+def _call(method: str, payload: dict):
+    """POST to the Bot API; return the 'result' object, or None on failure."""
     if not enabled():
         log.info("  (telegram disabled: TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set)")
-        return False
-    url = _API.format(token=config.TELEGRAM_BOT_TOKEN, method="sendMessage")
+        return None
+    url = _API.format(token=config.TELEGRAM_BOT_TOKEN, method=method)
     try:
-        r = requests.post(
-            url,
-            json={
-                "chat_id": config.TELEGRAM_CHAT_ID,
-                "text": text,
-                "parse_mode": parse_mode,
-                "disable_web_page_preview": True,
-            },
-            timeout=15,
-        )
+        r = requests.post(url, json=payload, timeout=15)
     except Exception:
-        log.exception("  telegram send error")
-        return False
+        log.exception("  telegram %s error", method)
+        return None
     if r.status_code != 200:
-        log.error("  telegram send failed: %s %s", r.status_code, r.text[:300])
-        return False
-    return True
+        log.error("  telegram %s failed: %s %s", method, r.status_code, r.text[:300])
+        return None
+    return r.json().get("result")
+
+
+def send_message(text, parse_mode="HTML", reply_markup=None):
+    """Send a message. Returns the new message_id (int) or None."""
+    payload = {
+        "chat_id": config.TELEGRAM_CHAT_ID,
+        "text": text,
+        "parse_mode": parse_mode,
+        "disable_web_page_preview": True,
+    }
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
+    result = _call("sendMessage", payload)
+    return (result or {}).get("message_id") if result else None
+
+
+# --- Phase 4: edit / answer for button interactions ---
+def edit_message_text(chat_id, message_id, text, parse_mode="HTML", reply_markup=None) -> bool:
+    payload = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "text": text,
+        "parse_mode": parse_mode,
+        "disable_web_page_preview": True,
+    }
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
+    return _call("editMessageText", payload) is not None
+
+
+def edit_reply_markup(chat_id, message_id, reply_markup=None) -> bool:
+    """Replace/remove a message's buttons (pass None to strip them)."""
+    payload = {"chat_id": chat_id, "message_id": message_id}
+    payload["reply_markup"] = reply_markup if reply_markup is not None else {"inline_keyboard": []}
+    return _call("editMessageReplyMarkup", payload) is not None
+
+
+def answer_callback(callback_query_id, text="") -> bool:
+    return _call("answerCallbackQuery",
+                 {"callback_query_id": callback_query_id, "text": text}) is not None

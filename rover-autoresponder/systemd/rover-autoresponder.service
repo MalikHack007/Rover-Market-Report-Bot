@@ -1,0 +1,22 @@
+# Phase 4: systemd USER service. Install:
+#   cp systemd/rover-autoresponder.service ~/.config/systemd/user/
+#   loginctl enable-linger malikhack007          # survive logout (already enabled)
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now rover-autoresponder
+# Logs:  journalctl --user -u rover-autoresponder -f
+[Unit]
+Description=Rover new-inquiry auto-responder
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adjust these two paths if your checkout or venv lives elsewhere:
+WorkingDirectory=/home/malikhack007/Repos/rover-automations/rover-autoresponder
+ExecStart=/home/malikhack007/Repos/rover-automations/.venv/bin/python -m autoresponder.main
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target

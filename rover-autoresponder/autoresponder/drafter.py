@@ -54,7 +54,7 @@ def build_system_prompt(playbook_text: str, faq_text: str, sitter_name: str) -> 
 
 def build_user_content(owner: Optional[str], pet: Optional[str],
                        dates: Optional[str], stored_stage: Optional[str],
-                       history: List[str]) -> str:
+                       history: List[str], extra_instruction: str = None) -> str:
     lines = [
         f"Owner: {owner or 'unknown'}",
         f"Pet: {pet or 'unknown (may be mentioned in the messages)'}",
@@ -70,6 +70,9 @@ def build_user_content(owner: Optional[str], pet: Optional[str],
         "Draft the next reply per the playbook, or set off_playbook=true (empty "
         "draft) if it doesn't fit any stage. Respond with the JSON object only.",
     ]
+    # Phase 4: a revision nudge from the Regenerate / Warmer / Shorter buttons.
+    if extra_instruction:
+        lines += ["", f"Revision request for this draft: {extra_instruction}"]
     return "\n".join(lines)
 
 
@@ -103,8 +106,12 @@ def call_model(client, system: str, user: str) -> str:
 
 
 def draft_reply(owner, pet, dates, stored_stage, history,
-                client=None, system_prompt=None) -> Draft:
-    """Produce a Draft for the latest message. Pass client/system_prompt in tests."""
+                client=None, system_prompt=None, extra_instruction=None) -> Draft:
+    """Produce a Draft for the latest message. Pass client/system_prompt in tests.
+
+    extra_instruction (Phase 4): a revision nudge from the Regenerate/Warmer/Shorter
+    buttons, appended to the user content.
+    """
     client = client or _make_client()
     if system_prompt is None:
         system_prompt = build_system_prompt(
@@ -112,7 +119,7 @@ def draft_reply(owner, pet, dates, stored_stage, history,
             load_text(config.FAQ_PATH),
             config.SITTER_NAME,
         )
-    user = build_user_content(owner, pet, dates, stored_stage, history)
+    user = build_user_content(owner, pet, dates, stored_stage, history, extra_instruction)
     raw = call_model(client, system_prompt, user)
     data = parse_llm_json(raw)
 
