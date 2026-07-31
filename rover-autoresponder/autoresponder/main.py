@@ -231,9 +231,23 @@ def run_live() -> None:
     from .pubsub_listener import listen
     from .debounce import Debouncer
     from .telegram_poll import poll_loop
+    from .heartbeat import start as start_heartbeat
 
     conn = store.init_db(config.DB_PATH)
     service = gmail_client.build_service()
+
+    # Phase 5: startup ping + periodic liveness heartbeat to Telegram.
+    start_heartbeat(conn, config.HEARTBEAT_INTERVAL_SEC)
+
+    # Phase 5: the playbook is gitignored, so a fresh deploy could be missing it.
+    # An empty playbook = useless drafts, so surface it loudly rather than silently.
+    from .drafter import load_text
+    if not load_text(config.PLAYBOOK_PATH).strip():
+        log.error("playbook missing/empty at %s — copy playbook.md.example and fill it in",
+                  config.PLAYBOOK_PATH)
+        from . import telegram_notify
+        telegram_notify.send_alert(
+            f"playbook.md missing/empty ({config.PLAYBOOK_PATH}) — drafts will be poor.")
 
     # Coalesce a burst of messages per thread into one draft call.
     debouncer = Debouncer(config.DEBOUNCE_SECONDS,

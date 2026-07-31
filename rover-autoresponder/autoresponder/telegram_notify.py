@@ -127,3 +127,9 @@ def edit_reply_markup(chat_id, message_id, reply_markup=None) -> bool:
 def answer_callback(callback_query_id, text="") -> bool:
     return _call("answerCallbackQuery",
                  {"callback_query_id": callback_query_id, "text": text}) is not None
+
+
+# --- Phase 5: alerting ---
+def send_alert(text) -> bool:
+    """Push an operational alert to the chat (silent-failure surfacing)."""
+    return send_message("⚠️ <b>Rover bot alert</b>\n" + _esc(text)) is not None

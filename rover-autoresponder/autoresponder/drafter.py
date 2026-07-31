@@ -46,8 +46,15 @@ def load_text(path: str) -> str:
 def build_system_prompt(playbook_text: str, faq_text: str, sitter_name: str) -> str:
     sys_prompt = playbook_text.replace("{SITTER_NAME}", sitter_name or "the sitter")
     if faq_text.strip():
+        # Phase 5: FAQ wired in. It's authoritative where it overlaps the playbook
+        # (e.g. the meet-and-greet link/wording), so the model has one source of truth.
         sys_prompt += (
-            "\n\n# FAQ (use this to answer ad-hoc client questions)\n" + faq_text
+            "\n\n# FAQ — canned answers to common client questions\n"
+            "Reproduce the relevant answer closely when a client asks one of these. "
+            "Where the FAQ and a playbook template cover the same thing (e.g. the "
+            "meet-and-greet), THIS FAQ wording is the current, authoritative version — "
+            "prefer it over the playbook template.\n\n"
+            + faq_text
         )
     return sys_prompt
 

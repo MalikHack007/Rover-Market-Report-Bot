@@ -33,6 +33,14 @@ def start_daily_renewal(service, conn, stop_event: threading.Event = None):
                 renew_once(service, conn)
             except Exception:
                 log.exception("watch() renewal FAILED — trigger may be dead")
+                # Phase 5: surface this silent-killer to Telegram.
+                try:
+                    from . import telegram_notify
+                    telegram_notify.send_alert(
+                        "Gmail watch() renewal failed — push notifications may stop. "
+                        "Check the service/logs.")
+                except Exception:
+                    pass
 
     t = threading.Thread(target=loop, daemon=True, name="watch-renewal")
     t.start()

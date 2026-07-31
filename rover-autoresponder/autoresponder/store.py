@@ -162,3 +162,17 @@ def mark_seen(conn: sqlite3.Connection, gmail_msg_id: str) -> None:
             "VALUES (?, ?, ?)",
             (None, gmail_msg_id, None),
         )
+
+
+# --- Phase 5: heartbeat stats ---
+def stats(conn: sqlite3.Connection) -> dict:
+    with _LOCK:
+        def one(sql):
+            return conn.execute(sql).fetchone()[0]
+        return {
+            "messages_24h": one("SELECT COUNT(*) FROM messages "
+                                "WHERE received_at > datetime('now','-1 day')"),
+            "active": one("SELECT COUNT(*) FROM threads WHERE status='active'"),
+            "converted": one("SELECT COUNT(*) FROM threads WHERE status='converted'"),
+            "not_suitable": one("SELECT COUNT(*) FROM threads WHERE status='not_suitable'"),
+        }
