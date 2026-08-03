@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import logging
 import os
+import time
 
 from . import config, store
 from .parser import parse_notification
@@ -294,14 +295,47 @@ def run_replay(path: str) -> None:
     dispatch(conn, pm, lambda tk: draft_thread(conn, tk))
 
 
+# Phase 5 hardening: alert on a fatal boot/crash. The disabled_client outage
+# crashed inside build_service() — before the heartbeat/watch-renewal threads that
+# alert — so nothing fired for 12h. This catches it. Rate-limited via an on-disk
+# stamp so a systemd restart loop doesn't spam Telegram.
+def _boot_alert_allowed(now: float) -> bool:
+    path = config.DB_PATH + ".bootalert"
+    try:
+        last = float(open(path).read().strip())
+    except Exception:
+        last = 0.0
+    if now - last < config.BOOT_ALERT_INTERVAL_SEC:
+        return False
+    try:
+        with open(path, "w") as fh:
+            fh.write(str(now))
+    except Exception:
+        log.exception("could not write boot-alert stamp")
+    return True
+
+
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Rover auto-responder — Phase 1")
+    ap = argparse.ArgumentParser(description="Rover auto-responder")
     ap.add_argument("--replay", metavar="FILE", help="parse a local sample, no Gmail")
     args = ap.parse_args()
     if args.replay:
         run_replay(args.replay)
-    else:
+        return
+    try:
         run_live()
+    except Exception as e:
+        log.exception("FATAL: run_live exited")
+        try:
+            if _boot_alert_allowed(time.time()):
+                from . import telegram_notify
+                telegram_notify.send_alert(
+                    f"auto-responder crashed on startup/run: "
+                    f"{type(e).__name__}: {str(e)[:300]}. Retrying via systemd; "
+                    "check the logs. (further alerts muted ~30 min)")
+        except Exception:
+            log.exception("boot-failure alert send failed")
+        raise  # preserve exit code so systemd sees the failure
 
 
 if __name__ == "__main__":

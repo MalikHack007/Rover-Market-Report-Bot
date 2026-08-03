@@ -1,13 +1,22 @@
-# Phase 4: systemd USER service. Install:
+# Phase 5: systemd USER service. Install:
 #   cp systemd/rover-autoresponder.service ~/.config/systemd/user/
 #   loginctl enable-linger malikhack007          # survive logout (already enabled)
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now rover-autoresponder
 # Logs:  journalctl --user -u rover-autoresponder -f
+#
+# If it hits the restart limit on a permanent error (e.g. OAuth client disabled),
+# the service stops looping and enters 'failed'. You'll have gotten one Telegram
+# alert. After fixing the cause:  systemctl --user reset-failed rover-autoresponder
+#                                  systemctl --user start rover-autoresponder
 [Unit]
 Description=Rover new-inquiry auto-responder
 After=network-online.target
 Wants=network-online.target
+# Stop hot-looping on a permanent failure: give up after 8 failures in 10 min.
+# Transient issues that clear within a restart or two still recover.
+StartLimitIntervalSec=600
+StartLimitBurst=8
 
 [Service]
 Type=simple

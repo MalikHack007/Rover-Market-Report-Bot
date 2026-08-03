@@ -48,3 +48,16 @@ def test_send_alert_prefixes_warning(monkeypatch):
     assert tg.send_alert("watch renewal failed") is True
     assert "alert" in sent["text"].lower()
     assert "watch renewal failed" in sent["text"]
+
+
+# --- boot/crash alert rate-limiting (Phase 5 hardening) ---
+def test_boot_alert_rate_limited(tmp_path, monkeypatch):
+    import time as _t
+    from autoresponder import main
+    monkeypatch.setattr(config, "DB_PATH", str(tmp_path / "x.db"))
+    monkeypatch.setattr(config, "BOOT_ALERT_INTERVAL_SEC", 1800)
+    now = _t.time()
+    assert main._boot_alert_allowed(now) is True         # first failure -> alert
+    assert main._boot_alert_allowed(now + 30) is False    # loop restart -> muted
+    assert main._boot_alert_allowed(now + 5) is False     # still muted
+    assert main._boot_alert_allowed(now + 2000) is True   # after window -> alert again

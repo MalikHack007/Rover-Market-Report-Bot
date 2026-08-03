@@ -24,6 +24,7 @@ WATCH_LABEL_IDS = ["INBOX"]
 DB_PATH = os.environ.get("DB_PATH", "./rover_autoresponder.db")
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 HEARTBEAT_INTERVAL_SEC = int(os.environ.get("HEARTBEAT_INTERVAL_SEC", str(24 * 3600)))  # Phase 5 heartbeat
+BOOT_ALERT_INTERVAL_SEC = int(os.environ.get("BOOT_ALERT_INTERVAL_SEC", "1800"))  # mute repeat boot-crash alerts
 
 # --- Phase 3: Telegram delivery (send-only) ---
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")   # from @BotFather
