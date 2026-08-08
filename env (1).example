@@ -1,0 +1,44 @@
+# --- Google Cloud / Pub/Sub ---
+GCP_PROJECT_ID=your-gcp-project-id
+PUBSUB_TOPIC=rover-gmail
+PUBSUB_SUBSCRIPTION=rover-gmail-sub
+
+# --- Gmail (dedicated Rover-messages account) ---
+GMAIL_CREDENTIALS_PATH=./credentials.json
+GMAIL_TOKEN_PATH=./token.json
+
+# --- Pub/Sub subscriber auth (SEPARATE from Gmail OAuth) ---
+# Service-account key with roles/pubsub.subscriber; used by pubsub_listener.
+GOOGLE_APPLICATION_CREDENTIALS=./pubsub-sa.json
+
+# --- Phase 2: LLM drafter (Anthropic) ---
+ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_MODEL=claude-sonnet-5
+DRAFT_MAX_TOKENS=1024
+SITTER_NAME=
+DEBOUNCE_SECONDS=45
+HEARTBEAT_INTERVAL_SEC=86400
+BOOT_ALERT_INTERVAL_SEC=1800
+# PLAYBOOK_PATH / FAQ_PATH default to files beside the package; override if needed.
+
+# --- Phase 3: Telegram delivery (send-only) ---
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
+
+# --- Local state ---
+DB_PATH=./rover_autoresponder.db
+LOG_LEVEL=INFO
+
+# --- Addendum A / S1: SMS gateway (phone-as-gateway) ---
+SMS_GATEWAY_BASE_URL=http://192.168.1.10:8080
+SMS_GATEWAY_USERNAME=
+SMS_GATEWAY_PASSWORD=
+# LOCAL mode: /message   (CLOUD mode would be /3rdparty/v1/messages)
+SMS_GATEWAY_SEND_PATH=/message
+SMS_WEBHOOK_HOST=0.0.0.0
+SMS_WEBHOOK_PORT=8899
+SMS_WEBHOOK_PATH=/sms/webhook
+SMS_WEBHOOK_SIGNING_KEY=
+# Optional TLS for the webhook receiver (gateway app requires HTTPS for non-127.0.0.1):
+SMS_WEBHOOK_CERT=
+SMS_WEBHOOK_KEY=

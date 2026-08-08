@@ -10,4 +10,6 @@ pubsub-sa.json
 # Personal/business content (address, links, your wording) — keep out of git.
 # Committed .example versions document the format; copy them and fill in locally.
 autoresponder/playbook.md
-autoresponder/faq.md
+autoresponder/faq.mdtoken.json*
+credentials.json*
+*.json.old

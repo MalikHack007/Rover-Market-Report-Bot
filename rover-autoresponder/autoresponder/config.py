@@ -47,3 +47,19 @@ def topic_path() -> str:
 
 def subscription_path() -> str:
     return f"projects/{GCP_PROJECT_ID}/subscriptions/{PUBSUB_SUBSCRIPTION}"
+
+
+# --- Addendum A / S1: SMS gateway (SMS Gateway for Android, local mode) ---
+# Outbound: the box POSTs to the phone's on-device HTTP server.
+SMS_GATEWAY_BASE_URL = os.environ.get("SMS_GATEWAY_BASE_URL", "http://192.168.1.10:8080")
+SMS_GATEWAY_USERNAME = os.environ.get("SMS_GATEWAY_USERNAME", "")   # app Home tab creds
+SMS_GATEWAY_PASSWORD = os.environ.get("SMS_GATEWAY_PASSWORD", "")
+# LOCAL mode uses bare "/message"; CLOUD mode would be "/3rdparty/v1/messages".
+SMS_GATEWAY_SEND_PATH = os.environ.get("SMS_GATEWAY_SEND_PATH", "/message")
+# Inbound: the phone POSTs webhooks to this receiver on the box.
+SMS_WEBHOOK_HOST = os.environ.get("SMS_WEBHOOK_HOST", "0.0.0.0")
+SMS_WEBHOOK_PORT = int(os.environ.get("SMS_WEBHOOK_PORT", "8899"))
+SMS_WEBHOOK_PATH = os.environ.get("SMS_WEBHOOK_PATH", "/sms/webhook")
+SMS_WEBHOOK_SIGNING_KEY = os.environ.get("SMS_WEBHOOK_SIGNING_KEY", "")  # Settings→Webhooks→Signing Key
+SMS_WEBHOOK_CERT = os.environ.get("SMS_WEBHOOK_CERT", "")   # optional TLS (CA-issued for LAN IP)
+SMS_WEBHOOK_KEY = os.environ.get("SMS_WEBHOOK_KEY", "")
