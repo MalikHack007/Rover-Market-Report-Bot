@@ -224,3 +224,49 @@ def sms_event_seen(conn: sqlite3.Connection, event_id: str) -> bool:
             return True
     set_meta(conn, f"sms_evt:{event_id}", "1")
     return False
+
+
+def get_client_messages(conn: sqlite3.Connection, thread_key: str):
+    """Addendum A / S3: only the CLIENT's own messages, oldest first.
+
+    Excludes Rover's machine-generated marker texts (inquiry/confirmed/modified),
+    which are recorded with their kind in raw_subject. The drafter should read what
+    the client actually wrote, not Rover's boilerplate.
+    """
+    with _LOCK:
+        cur = conn.execute(
+            "SELECT text FROM messages WHERE thread_key=? AND direction='inbound' "
+            "AND (raw_subject IS NULL OR raw_subject='message') ORDER BY id",
+            (thread_key,),
+        )
+        return [r[0] for r in cur.fetchall() if r[0]]
+
+
+def record_outbound(conn: sqlite3.Connection, number: str, text: str,
+                    gateway_msg_id: str = None) -> None:
+    """Addendum A: log a reply WE sent, so the drafter sees both sides of the thread."""
+    with _LOCK, conn:
+        conn.execute(
+            "INSERT INTO messages (thread_key, gmail_msg_id, direction, text, "
+            "recognized, raw_subject) VALUES (?,?,?,?,?,?)",
+            (number, gateway_msg_id, "outbound", text, 1, "message"),
+        )
+        conn.execute(
+            "UPDATE threads SET updated_at=datetime('now') WHERE thread_key=?", (number,))
+
+
+def get_conversation(conn: sqlite3.Connection, thread_key: str):
+    """Full two-sided conversation, oldest first, as ('Client'|'You', text) tuples.
+
+    SMS mirrors the whole thread, so unlike the email path the drafter can see its
+    own prior replies — which makes stage inference far more reliable. Rover's
+    machine-generated marker texts stay excluded.
+    """
+    with _LOCK:
+        cur = conn.execute(
+            "SELECT direction, text FROM messages WHERE thread_key=? "
+            "AND (raw_subject IS NULL OR raw_subject='message') ORDER BY id",
+            (thread_key,),
+        )
+        return [("You" if d == "outbound" else "Client", t)
+                for d, t in cur.fetchall() if t]

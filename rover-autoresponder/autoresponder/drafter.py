@@ -68,10 +68,17 @@ def build_user_content(owner: Optional[str], pet: Optional[str],
         f"Stay start: {dates or 'unknown'}",
         f"Stored stage hint: {stored_stage or 'S0_INITIAL'}",
         "",
-        "Client messages so far (oldest first):",
+        "Conversation so far (oldest first; 'Client' = them, 'You' = replies you "
+        "already sent):",
     ]
     for i, msg in enumerate(history, 1):
-        lines.append(f"  {i}. {msg}")
+        # Addendum A: SMS history arrives as ("Client"|"You", text) tuples so the model
+        # sees BOTH sides. The email path still passes plain strings (client-only).
+        if isinstance(msg, (tuple, list)) and len(msg) == 2:
+            speaker, text = msg
+            lines.append(f"  {i}. {speaker}: {text}")
+        else:
+            lines.append(f"  {i}. {msg}")
     lines += [
         "",
         "Draft the next reply per the playbook, or set off_playbook=true (empty "

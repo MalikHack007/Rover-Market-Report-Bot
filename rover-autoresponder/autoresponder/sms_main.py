@@ -36,19 +36,28 @@ def main() -> None:
 
     if args.replay:
         from . import store
-        from .sms_pipeline import handle_sms
+        from .sms_pipeline import handle_sms, draft_for_thread
         conn = store.init_db(config.DB_PATH)
-        handle_sms(conn, args.replay[0], args.replay[1])
+        # Replay drafts immediately (no debounce) for single-message dev testing.
+        handle_sms(conn, args.replay[0], args.replay[1],
+                   schedule_draft=lambda n: draft_for_thread(conn, n))
         return
 
     if args.serve:
         from . import store
         from .sms_receiver import serve
-        from .sms_pipeline import handle_sms
+        from .sms_pipeline import handle_sms, draft_for_thread
+        from .debounce import Debouncer
 
         conn = store.init_db(config.DB_PATH)
 
-        # S2: route sms:received into the state machine; log other events.
+        # S3: coalesce a burst of messages per thread into ONE draft call. Rover's
+        # opening arrives as several texts (booking block, "will you be available",
+        # sometimes a later afterthought) — all should produce a single draft.
+        debouncer = Debouncer(config.DEBOUNCE_SECONDS,
+                              on_fire=lambda n: draft_for_thread(conn, n)).start()
+        log.info("debouncer active: %ss window", config.DEBOUNCE_SECONDS)
+
         def on_event(data):
             if store.sms_event_seen(conn, data.get("id")):
                 return                       # gateway retry of an event we handled
@@ -57,7 +66,8 @@ def main() -> None:
                 log_event(data)
                 return
             p = data.get("payload") or {}
-            handle_sms(conn, p.get("sender"), p.get("message"))
+            handle_sms(conn, p.get("sender"), p.get("message"),
+                       schedule_draft=debouncer.bump)
 
         serve(on_event=on_event)
         return

@@ -72,3 +72,56 @@ def _dates(msg) -> str:
     if msg.start_date and msg.end_date:
         return f"{msg.start_date} to {msg.end_date}"
     return msg.start_date or ""
+
+
+# --- Addendum A / S3: wire the brain (drafter + playbook/FAQ + Telegram) ---
+def draft_for_thread(conn, number: str) -> None:
+    """Draft the next reply for an active SMS inquiry thread and push it to Telegram.
+
+    Called by the debouncer once the thread has been quiet, so a burst of messages
+    (booking block + "will you be available" + a later afterthought) produces ONE
+    informed draft. S3 = draft + display only; sending is S4.
+    """
+    from . import config, store, telegram_notify
+    from .drafter import should_draft, draft_reply
+
+    if not config.ANTHROPIC_API_KEY:
+        log.info("  (draft skipped: ANTHROPIC_API_KEY not set)")
+        return
+    row = store.get_thread(conn, number)
+    if not row:
+        return
+    owner, pet, dates, stage, status = row
+    if status != "active" or not should_draft(status):
+        log.info("  (thread %s is %s; not drafting)", number, status)
+        return
+
+    # SMS mirrors the whole thread, so the drafter sees BOTH sides (labelled
+    # Client/You) — better stage inference than the client-only email view.
+    history = store.get_conversation(conn, number)
+    if not history:
+        log.info("  (no client messages yet on %s; nothing to draft)", number)
+        return
+    if not any(sp == "Client" for sp, _ in history):
+        log.info("  (nothing from the client yet on %s; not drafting)", number)
+        return
+    try:
+        d = draft_reply(owner, pet, dates, stage, history)
+    except Exception:
+        log.exception("  draft failed for %s", number)
+        return
+
+    store.update_thread_stage(conn, number, d.stage)
+    if d.off_playbook:
+        log.warning("  OFF-PLAYBOOK [%s] flags=%s — needs your attention", d.stage, d.flags)
+        telegram_notify.send_message(
+            telegram_notify.format_offplaybook_card(owner, d.flags, history))
+        return
+
+    store.set_last_draft(conn, number, d.draft_text)
+    log.info("  DRAFT [%s]%s (from %d msg)\n----- draft -----\n%s\n-----------------",
+             d.stage, f" flags={d.flags}" if d.flags else "", len(history), d.draft_text)
+    # S3: display only — no buttons that send. S4 adds Approve & Send.
+    telegram_notify.send_message(
+        telegram_notify.format_draft_card(owner, dates, d.stage, d.flags,
+                                          history, d.draft_text))

@@ -34,8 +34,14 @@ def _esc(s) -> str:
 def _quote_messages(history) -> list:
     out = []
     for m in history[-6:]:
-        text = m if len(m) <= _MAX_MSG_CHARS else m[:_MAX_MSG_CHARS] + "…"
-        out.append("<blockquote>" + _esc(text) + "</blockquote>")
+        # Addendum A: SMS passes ("Client"|"You", text) tuples; email passes strings.
+        if isinstance(m, (tuple, list)) and len(m) == 2:
+            speaker, text = m
+            prefix = "" if speaker == "Client" else "<i>you:</i> "
+        else:
+            prefix, text = "", m
+        text = text if len(text) <= _MAX_MSG_CHARS else text[:_MAX_MSG_CHARS] + "…"
+        out.append("<blockquote>" + prefix + _esc(text) + "</blockquote>")
     return out
 
 
