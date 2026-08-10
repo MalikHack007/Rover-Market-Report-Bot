@@ -19,10 +19,12 @@ log = logging.getLogger("sms")
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Rover SMS bridge (S1)")
+    ap = argparse.ArgumentParser(description="Rover SMS bridge")
     ap.add_argument("--serve", action="store_true", help="run the inbound webhook receiver")
     ap.add_argument("--send", nargs=2, metavar=("NUMBER", "TEXT"),
                     help="send a test SMS via the phone gateway")
+    ap.add_argument("--replay", nargs=2, metavar=("NUMBER", "TEXT"),
+                    help="feed one SMS through the pipeline offline (no phone)")
     args = ap.parse_args()
 
     if args.send:
@@ -30,11 +32,37 @@ def main() -> None:
         number, text = args.send
         mid = SmsGateForAndroid().send(number, text)
         print("sent" if mid else "FAILED", "— gateway message id:", mid)
-    elif args.serve:
+        return
+
+    if args.replay:
+        from . import store
+        from .sms_pipeline import handle_sms
+        conn = store.init_db(config.DB_PATH)
+        handle_sms(conn, args.replay[0], args.replay[1])
+        return
+
+    if args.serve:
+        from . import store
         from .sms_receiver import serve
-        serve()
-    else:
-        ap.print_help()
+        from .sms_pipeline import handle_sms
+
+        conn = store.init_db(config.DB_PATH)
+
+        # S2: route sms:received into the state machine; log other events.
+        def on_event(data):
+            if store.sms_event_seen(conn, data.get("id")):
+                return                       # gateway retry of an event we handled
+            if data.get("event") != "sms:received":
+                from .sms_receiver import log_event
+                log_event(data)
+                return
+            p = data.get("payload") or {}
+            handle_sms(conn, p.get("sender"), p.get("message"))
+
+        serve(on_event=on_event)
+        return
+
+    ap.print_help()
 
 
 if __name__ == "__main__":

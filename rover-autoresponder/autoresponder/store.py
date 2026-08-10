@@ -176,3 +176,51 @@ def stats(conn: sqlite3.Connection) -> dict:
             "converted": one("SELECT COUNT(*) FROM threads WHERE status='converted'"),
             "not_suitable": one("SELECT COUNT(*) FROM threads WHERE status='not_suitable'"),
         }
+
+
+# --- Addendum A / S2: SMS threads (keyed by conversation number) ---
+def upsert_sms_thread(conn: sqlite3.Connection, number: str, owner_name=None,
+                      pet_name=None, stay_dates=None, status=None) -> None:
+    """Create or update an SMS thread. Only overwrites fields that are provided."""
+    with _LOCK, conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO threads (thread_key, status) VALUES (?, ?)",
+            (number, status or "active"),
+        )
+        sets, vals = [], []
+        for col, val in (("owner_name", owner_name), ("pet_name", pet_name),
+                         ("stay_dates", stay_dates), ("status", status)):
+            if val:
+                sets.append(f"{col}=?")
+                vals.append(val)
+        if sets:
+            vals.append(number)
+            conn.execute(
+                f"UPDATE threads SET {', '.join(sets)}, updated_at=datetime('now') "
+                "WHERE thread_key=?", vals)
+
+
+def record_sms(conn: sqlite3.Connection, number: str, msg) -> None:
+    """Append an inbound SMS to the thread's message log."""
+    with _LOCK, conn:
+        conn.execute(
+            "INSERT INTO messages (thread_key, gmail_msg_id, direction, text, "
+            "recognized, raw_subject) VALUES (?,?,?,?,?,?)",
+            (number, None, "inbound", msg.text, 1 if msg.kind != "message" else 0,
+             msg.kind),
+        )
+        conn.execute(
+            "UPDATE threads SET last_msg_text=?, updated_at=datetime('now') "
+            "WHERE thread_key=?", (msg.text, number))
+
+
+def sms_event_seen(conn: sqlite3.Connection, event_id: str) -> bool:
+    """Persistent webhook dedupe (the gateway retries until it gets a 2xx)."""
+    if not event_id:
+        return False
+    with _LOCK:
+        cur = conn.execute("SELECT 1 FROM meta WHERE key=?", (f"sms_evt:{event_id}",))
+        if cur.fetchone():
+            return True
+    set_meta(conn, f"sms_evt:{event_id}", "1")
+    return False
