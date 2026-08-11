@@ -45,6 +45,26 @@ def _quote_messages(history) -> list:
     return out
 
 
+# Addendum A / S4: SMS keyboard. Approve & Send TRANSMITS to the client, so it sits
+# alone on the top row to reduce mis-taps.
+_SMS_BUTTONS = [
+    [("✅ Approve & Send", "send")],
+    [("✏️ Edit", "edit"), ("🔁 Regenerate", "regen")],
+    [("☀️ Warmer", "warm"), ("✂️ Shorter", "short")],
+    [("🎉 Converted", "conv"), ("🚫 Not suitable", "unfit")],
+]
+
+
+def build_sms_keyboard(thread_key: str) -> dict:
+    """Keyboard for SMS draft cards (approve-and-send flow)."""
+    return {
+        "inline_keyboard": [
+            [{"text": t, "callback_data": f"{a}:{thread_key}"} for t, a in row]
+            for row in _SMS_BUTTONS
+        ]
+    }
+
+
 def build_keyboard(thread_key: str) -> dict:
     """Phase 4: inline keyboard whose buttons carry the thread key."""
     return {
@@ -55,8 +75,18 @@ def build_keyboard(thread_key: str) -> dict:
     }
 
 
-def format_draft_card(owner, dates, stage, flags, history, draft_text) -> str:
-    lines = [f"🐾 <b>New inquiry — {_esc(owner) or 'unknown'}</b>"]
+def format_draft_card(owner, dates, stage, flags, history, draft_text,
+                      needs_review: bool = False) -> str:
+    """needs_review=True (off-playbook): same card, but flagged for careful reading.
+
+    The draft is still shown with buttons so you can edit-and-send from Telegram
+    rather than having to go handle it manually elsewhere.
+    """
+    if needs_review:
+        lines = [f"⚠️ <b>Needs your review — {_esc(owner) or 'unknown'}</b>",
+                 "<i>Off-playbook — read carefully before sending.</i>"]
+    else:
+        lines = [f"🐾 <b>New inquiry — {_esc(owner) or 'unknown'}</b>"]
     meta = f"Stage: {_esc(stage)}"
     if dates:
         meta += f" · starting {_esc(dates)}"

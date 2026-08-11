@@ -80,15 +80,30 @@ def test_no_draft_without_api_key(tmp_path, monkeypatch):
     draft_for_thread(conn, A)                  # should no-op, not raise
 
 
-def test_offplaybook_sends_attention_card(tmp_path, monkeypatch):
+def test_offplaybook_still_drafts_with_buttons(tmp_path, monkeypatch):
+    """Off-playbook = flagged for review, NOT a dead end: draft + approve/edit buttons."""
     conn = _db(tmp_path)
-    sent = _mock(monkeypatch, draft=Draft(stage="S3_POST_SCREEN", draft_text="",
-                                          off_playbook=True, flags=["asks about cats"]))
+    sent = _mock(monkeypatch, draft=Draft(
+        stage="S3_POST_SCREEN", off_playbook=True, flags=["asks about cats"],
+        draft_text="Great question — let me confirm and get right back to you!"))
     handle_sms(conn, A, ANIKA_INQ)
     handle_sms(conn, A, "do you watch kittens too?")
     draft_for_thread(conn, A)
-    assert sent and "Needs your attention" in sent[0]
+    assert sent and "Needs your review" in sent[0]      # flagged...
+    assert "let me confirm" in sent[0]                   # ...but the draft is there
     assert "cats" in sent[0]
+    # and it's armed for Approve & Send / editing
+    assert store.get_pending_text(conn, A) == "Great question — let me confirm and get right back to you!"
+
+
+def test_empty_draft_falls_back_to_attention_card(tmp_path, monkeypatch):
+    conn = _db(tmp_path)
+    sent = _mock(monkeypatch, draft=Draft(stage="S3_POST_SCREEN", draft_text="",
+                                          off_playbook=True, flags=["weird"]))
+    handle_sms(conn, A, ANIKA_INQ)
+    handle_sms(conn, A, "???")
+    draft_for_thread(conn, A)
+    assert sent and "Needs your attention" in sent[0]
 
 
 def test_burst_coalesces_to_one_draft(tmp_path, monkeypatch):

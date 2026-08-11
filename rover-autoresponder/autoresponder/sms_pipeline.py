@@ -112,16 +112,29 @@ def draft_for_thread(conn, number: str) -> None:
         return
 
     store.update_thread_stage(conn, number, d.stage)
+
+    # Off-playbook no longer means "no draft". The model always drafts a safe,
+    # non-committal attempt; we just flag the card so you read it carefully. You can
+    # then edit it in Telegram and send — no need to go handle it elsewhere.
     if d.off_playbook:
-        log.warning("  OFF-PLAYBOOK [%s] flags=%s — needs your attention", d.stage, d.flags)
+        log.warning("  OFF-PLAYBOOK [%s] flags=%s — drafted for review", d.stage, d.flags)
+    if not d.draft_text:
+        # Defensive: an older prompt (or a stubborn model) returned nothing.
+        log.warning("  empty draft on %s — sending attention card instead", number)
         telegram_notify.send_message(
             telegram_notify.format_offplaybook_card(owner, d.flags, history))
         return
 
     store.set_last_draft(conn, number, d.draft_text)
+    # S4: this is what "Approve & Send" will transmit (until you edit it).
+    store.set_pending_text(conn, number, d.draft_text)
     log.info("  DRAFT [%s]%s (from %d msg)\n----- draft -----\n%s\n-----------------",
              d.stage, f" flags={d.flags}" if d.flags else "", len(history), d.draft_text)
-    # S3: display only — no buttons that send. S4 adds Approve & Send.
-    telegram_notify.send_message(
+    # S4: card carries Approve & Send / Edit / tone / terminal buttons. Link the card
+    # to the thread so replying to it edits this draft.
+    mid = telegram_notify.send_message(
         telegram_notify.format_draft_card(owner, dates, d.stage, d.flags,
-                                          history, d.draft_text))
+                                          history, d.draft_text,
+                                          needs_review=d.off_playbook),
+        reply_markup=telegram_notify.build_sms_keyboard(number))
+    store.link_card(conn, mid, number)

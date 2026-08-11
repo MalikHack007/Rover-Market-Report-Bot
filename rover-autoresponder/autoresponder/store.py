@@ -41,7 +41,31 @@ CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
   value TEXT
 );
+-- Addendum A / S4: idempotency ledger. One row per (thread, exact text) send claim,
+-- so a double-tap or retry can never transmit the same message twice.
+CREATE TABLE IF NOT EXISTS sends (
+  send_key       TEXT PRIMARY KEY,
+  thread_key     TEXT,
+  text           TEXT,
+  gateway_msg_id TEXT,
+  status         TEXT DEFAULT 'claimed',   -- claimed|sent|delivered|failed
+  created_at     TEXT DEFAULT (datetime('now')),
+  updated_at     TEXT DEFAULT (datetime('now'))
+);
+-- S4: maps a Telegram card to its thread, so replying to a card edits that draft.
+CREATE TABLE IF NOT EXISTS cards (
+  message_id  INTEGER PRIMARY KEY,
+  thread_key  TEXT,
+  created_at  TEXT DEFAULT (datetime('now'))
+);
 """
+
+# S4: columns added to `threads` on existing databases.
+_MIGRATIONS = [
+    "ALTER TABLE threads ADD COLUMN pending_text TEXT",
+    "ALTER TABLE threads ADD COLUMN send_status TEXT",
+    "ALTER TABLE threads ADD COLUMN sent_at TEXT",
+]
 
 
 def init_db(path: str) -> sqlite3.Connection:
@@ -50,6 +74,11 @@ def init_db(path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(path, check_same_thread=False)
     with _LOCK:
         conn.executescript(SCHEMA)
+        for stmt in _MIGRATIONS:          # additive; ignore "duplicate column"
+            try:
+                conn.execute(stmt)
+            except sqlite3.OperationalError:
+                pass
         conn.commit()
     return conn
 
@@ -270,3 +299,91 @@ def get_conversation(conn: sqlite3.Connection, thread_key: str):
         )
         return [("You" if d == "outbound" else "Client", t)
                 for d, t in cur.fetchall() if t]
+
+
+# --- Addendum A / S4: pending text, card mapping, send idempotency ---
+def set_pending_text(conn: sqlite3.Connection, number: str, text: str) -> None:
+    """The text that Approve & Send will transmit (a draft, or your edited version)."""
+    with _LOCK, conn:
+        conn.execute(
+            "UPDATE threads SET pending_text=?, updated_at=datetime('now') "
+            "WHERE thread_key=?", (text, number))
+
+
+def get_pending_text(conn: sqlite3.Connection, number: str):
+    with _LOCK:
+        cur = conn.execute("SELECT pending_text FROM threads WHERE thread_key=?", (number,))
+        row = cur.fetchone()
+        return row[0] if row else None
+
+
+def link_card(conn: sqlite3.Connection, message_id: int, number: str) -> None:
+    """Remember which thread a Telegram card belongs to (for reply-to-edit)."""
+    if not message_id:
+        return
+    with _LOCK, conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO cards (message_id, thread_key) VALUES (?,?)",
+            (int(message_id), number))
+
+
+def thread_for_card(conn: sqlite3.Connection, message_id: int):
+    with _LOCK:
+        cur = conn.execute("SELECT thread_key FROM cards WHERE message_id=?",
+                           (int(message_id),))
+        row = cur.fetchone()
+        return row[0] if row else None
+
+
+def _send_key(number: str, text: str) -> str:
+    import hashlib
+    return hashlib.sha1(f"{number}\x00{text}".encode()).hexdigest()
+
+
+def claim_send(conn: sqlite3.Connection, number: str, text: str):
+    """Reserve a send. Returns send_key if THIS caller won the claim, else None.
+
+    The idempotency guard: a double-tap of Approve, or a retry, hits the same
+    (thread, text) key and loses the race, so the client never gets two copies.
+    """
+    key = _send_key(number, text)
+    with _LOCK, conn:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO sends (send_key, thread_key, text) VALUES (?,?,?)",
+            (key, number, text))
+        return key if cur.rowcount else None
+
+
+def update_send(conn: sqlite3.Connection, send_key: str, status: str,
+                gateway_msg_id: str = None) -> None:
+    with _LOCK, conn:
+        if gateway_msg_id:
+            conn.execute(
+                "UPDATE sends SET status=?, gateway_msg_id=?, updated_at=datetime('now') "
+                "WHERE send_key=?", (status, gateway_msg_id, send_key))
+        else:
+            conn.execute(
+                "UPDATE sends SET status=?, updated_at=datetime('now') WHERE send_key=?",
+                (status, send_key))
+
+
+def release_send(conn: sqlite3.Connection, send_key: str) -> None:
+    """Drop a claim that never made it out, so you can retry the same text."""
+    with _LOCK, conn:
+        conn.execute("DELETE FROM sends WHERE send_key=?", (send_key,))
+
+
+def send_by_gateway_id(conn: sqlite3.Connection, gateway_msg_id: str):
+    with _LOCK:
+        cur = conn.execute(
+            "SELECT send_key, thread_key, status FROM sends WHERE gateway_msg_id=?",
+            (gateway_msg_id,))
+        return cur.fetchone()
+
+
+def mark_thread_sent(conn: sqlite3.Connection, number: str, status: str) -> None:
+    with _LOCK, conn:
+        conn.execute(
+            "UPDATE threads SET send_status=?, sent_at=datetime('now'), "
+            "pending_text=NULL, updated_at=datetime('now') WHERE thread_key=?",
+            (status, number))

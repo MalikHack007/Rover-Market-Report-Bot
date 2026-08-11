@@ -44,10 +44,14 @@ def main() -> None:
         return
 
     if args.serve:
+        import threading
+
         from . import store
         from .sms_receiver import serve
         from .sms_pipeline import handle_sms, draft_for_thread
         from .debounce import Debouncer
+        from .telegram_poll import poll_loop
+        from . import sms_approve
 
         conn = store.init_db(config.DB_PATH)
 
@@ -58,14 +62,26 @@ def main() -> None:
                               on_fire=lambda n: draft_for_thread(conn, n)).start()
         log.info("debouncer active: %ss window", config.DEBOUNCE_SECONDS)
 
+        # S4: receive button taps AND text replies (the edit path) from Telegram.
+        threading.Thread(
+            target=poll_loop,
+            args=(lambda d, c, m, q: sms_approve.handle_callback(conn, d, c, m, q),),
+            kwargs={"on_text": lambda t, c, r: sms_approve.handle_text_reply(conn, t, c, r)},
+            daemon=True, name="telegram-poller",
+        ).start()
+
         def on_event(data):
             if store.sms_event_seen(conn, data.get("id")):
                 return                       # gateway retry of an event we handled
-            if data.get("event") != "sms:received":
+            event = data.get("event")
+            p = data.get("payload") or {}
+            if event != "sms:received":
+                # S4: delivery confirmation closes the loop on an approved send.
+                if event in ("sms:sent", "sms:delivered", "sms:failed"):
+                    sms_approve.handle_delivery_event(conn, event, p)
                 from .sms_receiver import log_event
                 log_event(data)
                 return
-            p = data.get("payload") or {}
             handle_sms(conn, p.get("sender"), p.get("message"),
                        schedule_draft=debouncer.bump)
 
