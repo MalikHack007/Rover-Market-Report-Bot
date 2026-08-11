@@ -155,3 +155,72 @@ def test_conversation_excludes_markers(tmp_path):
     store.record_outbound(conn, A, "hi back")
     convo = store.get_conversation(conn, A)
     assert convo == [("Client", "hello"), ("You", "hi back")]
+
+
+# --- returning clients: skip the screening playbook ---
+CONF = ("[ Anika has confirmed a booking request (boarding) with Teddy "
+        "from 08/21 to 08/23 - View on Rover ]")
+INQ2 = ("[ New booking request (boarding) from Anika: Teddy (2 yr, 62 lbs) "
+        "01/10/2027 to 01/12/2027. Book @ r.rover.com/new ]")
+
+
+def test_returning_client_gets_template_not_playbook(tmp_path, monkeypatch):
+    conn = _db(tmp_path)
+    called = {"llm": 0}
+    sent = _mock(monkeypatch)
+    def counting_draft(*a, **k):
+        called["llm"] += 1
+        return Draft(stage="S0_INITIAL", draft_text="playbook greeting", off_playbook=False, flags=[])
+    monkeypatch.setattr("autoresponder.drafter.draft_reply", counting_draft)
+
+    handle_sms(conn, A, ANIKA_INQ)
+    handle_sms(conn, A, CONF)                       # they BOOKED -> real client
+    handle_sms(conn, A, INQ2)                       # a year later, new request
+    handle_sms(conn, A, "Hey! Teddy's back, are you free?")
+    draft_for_thread(conn, A)
+
+    assert called["llm"] == 0                       # no API call spent
+    assert store.get_pending_text(conn, A) == \
+        "Hey Anika, happy to take care of Teddy again, just accepted!"
+    assert any("returning client" in s for s in sent)
+    assert store.get_thread(conn, A)[3] == "S3_POST_SCREEN"   # screening skipped
+
+
+def test_past_inquirer_who_never_booked_still_gets_screened(tmp_path, monkeypatch):
+    """Only a CONFIRMED booking counts — a fizzled inquiry must not skip screening."""
+    conn = _db(tmp_path)
+    captured = {}
+    _mock(monkeypatch, captured=captured)
+    handle_sms(conn, A, ANIKA_INQ)
+    handle_sms(conn, A, "just browsing")
+    handle_sms(conn, A, INQ2)                       # returns, but never booked before
+    handle_sms(conn, A, "are you free?")
+    draft_for_thread(conn, A)
+    assert "history" in captured                    # the LLM/playbook path ran
+    assert store.get_pending_text(conn, A) == "Hey Anika, Teddy looks adorable!"
+
+
+def test_returning_client_only_greets_once_then_drafts_normally(tmp_path, monkeypatch):
+    conn = _db(tmp_path)
+    captured = {}
+    _mock(monkeypatch, captured=captured)
+    handle_sms(conn, A, ANIKA_INQ)
+    handle_sms(conn, A, CONF)
+    handle_sms(conn, A, INQ2)
+    handle_sms(conn, A, "Teddy's back!")
+    draft_for_thread(conn, A)                                   # template greeting
+    store.record_outbound(conn, A, store.get_pending_text(conn, A))   # you approve+send
+    handle_sms(conn, A, "Do you still do the park meet up?")
+    draft_for_thread(conn, A)                                   # now normal drafting
+    assert "history" in captured                                 # LLM path used
+    assert store.get_pending_text(conn, A) == "Hey Anika, Teddy looks adorable!"
+
+
+def test_first_time_client_unaffected(tmp_path, monkeypatch):
+    conn = _db(tmp_path)
+    captured = {}
+    _mock(monkeypatch, captured=captured)
+    handle_sms(conn, A, ANIKA_INQ)
+    handle_sms(conn, A, "will you be available?")
+    draft_for_thread(conn, A)
+    assert "history" in captured                     # normal playbook path

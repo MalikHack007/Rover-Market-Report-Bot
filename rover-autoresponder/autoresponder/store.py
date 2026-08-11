@@ -62,6 +62,13 @@ CREATE TABLE IF NOT EXISTS cards (
 
 # S4: columns added to `threads` on existing databases.
 _MIGRATIONS = [
+    # Rover assigns a number per CLIENT (reused across bookings years apart), not per
+    # request. An "episode" is one booking request within that long-lived thread.
+    "ALTER TABLE threads ADD COLUMN episode INTEGER DEFAULT 1",
+    # Set once a booking is CONFIRMED: this client has actually boarded with us, so a
+    # future request skips screening. (An inquiry that never booked doesn't count.)
+    "ALTER TABLE threads ADD COLUMN has_booked INTEGER DEFAULT 0",
+    "ALTER TABLE messages ADD COLUMN episode INTEGER DEFAULT 1",
     "ALTER TABLE threads ADD COLUMN pending_text TEXT",
     "ALTER TABLE threads ADD COLUMN send_status TEXT",
     "ALTER TABLE threads ADD COLUMN sent_at TEXT",
@@ -232,11 +239,14 @@ def upsert_sms_thread(conn: sqlite3.Connection, number: str, owner_name=None,
 def record_sms(conn: sqlite3.Connection, number: str, msg) -> None:
     """Append an inbound SMS to the thread's message log."""
     with _LOCK, conn:
+        cur = conn.execute("SELECT episode FROM threads WHERE thread_key=?", (number,))
+        row = cur.fetchone()
+        ep = int(row[0]) if row and row[0] else 1
         conn.execute(
             "INSERT INTO messages (thread_key, gmail_msg_id, direction, text, "
-            "recognized, raw_subject) VALUES (?,?,?,?,?,?)",
+            "recognized, raw_subject, episode) VALUES (?,?,?,?,?,?,?)",
             (number, None, "inbound", msg.text, 1 if msg.kind != "message" else 0,
-             msg.kind),
+             msg.kind, ep),
         )
         conn.execute(
             "UPDATE threads SET last_msg_text=?, updated_at=datetime('now') "
@@ -265,8 +275,10 @@ def get_client_messages(conn: sqlite3.Connection, thread_key: str):
     with _LOCK:
         cur = conn.execute(
             "SELECT text FROM messages WHERE thread_key=? AND direction='inbound' "
-            "AND (raw_subject IS NULL OR raw_subject='message') ORDER BY id",
-            (thread_key,),
+            "AND (raw_subject IS NULL OR raw_subject='message') "
+            "AND episode = COALESCE((SELECT episode FROM threads WHERE thread_key=?), 1) "
+            "ORDER BY id",
+            (thread_key, thread_key),
         )
         return [r[0] for r in cur.fetchall() if r[0]]
 
@@ -275,10 +287,13 @@ def record_outbound(conn: sqlite3.Connection, number: str, text: str,
                     gateway_msg_id: str = None) -> None:
     """Addendum A: log a reply WE sent, so the drafter sees both sides of the thread."""
     with _LOCK, conn:
+        cur = conn.execute("SELECT episode FROM threads WHERE thread_key=?", (number,))
+        row = cur.fetchone()
+        ep = int(row[0]) if row and row[0] else 1
         conn.execute(
             "INSERT INTO messages (thread_key, gmail_msg_id, direction, text, "
-            "recognized, raw_subject) VALUES (?,?,?,?,?,?)",
-            (number, gateway_msg_id, "outbound", text, 1, "message"),
+            "recognized, raw_subject, episode) VALUES (?,?,?,?,?,?,?)",
+            (number, gateway_msg_id, "outbound", text, 1, "message", ep),
         )
         conn.execute(
             "UPDATE threads SET updated_at=datetime('now') WHERE thread_key=?", (number,))
@@ -292,10 +307,14 @@ def get_conversation(conn: sqlite3.Connection, thread_key: str):
     machine-generated marker texts stay excluded.
     """
     with _LOCK:
+        # Scoped to the CURRENT episode: a returning client's new request must not
+        # inherit a conversation from a booking a year ago.
         cur = conn.execute(
             "SELECT direction, text FROM messages WHERE thread_key=? "
-            "AND (raw_subject IS NULL OR raw_subject='message') ORDER BY id",
-            (thread_key,),
+            "AND (raw_subject IS NULL OR raw_subject='message') "
+            "AND episode = COALESCE((SELECT episode FROM threads WHERE thread_key=?), 1) "
+            "ORDER BY id",
+            (thread_key, thread_key),
         )
         return [("You" if d == "outbound" else "Client", t)
                 for d, t in cur.fetchall() if t]
@@ -387,3 +406,93 @@ def mark_thread_sent(conn: sqlite3.Connection, number: str, status: str) -> None
             "UPDATE threads SET send_status=?, sent_at=datetime('now'), "
             "pending_text=NULL, updated_at=datetime('now') WHERE thread_key=?",
             (status, number))
+
+
+# --- Addendum A: episodes (numbers are per-CLIENT and reused across bookings) ---
+def get_episode(conn: sqlite3.Connection, number: str) -> int:
+    with _LOCK:
+        cur = conn.execute("SELECT episode FROM threads WHERE thread_key=?", (number,))
+        row = cur.fetchone()
+        return int(row[0]) if row and row[0] else 1
+
+
+def start_new_episode(conn: sqlite3.Connection, number: str, owner_name=None,
+                      pet_name=None, stay_dates=None) -> int:
+    """A new inquiry marker on an existing thread = the client is booking again.
+
+    Bumps the episode, reactivates the thread, and resets stage/draft state so the
+    new request starts clean instead of inheriting a stale (possibly year-old)
+    conversation or a terminal 'converted' status.
+    """
+    with _LOCK, conn:
+        cur = conn.execute("SELECT episode FROM threads WHERE thread_key=?", (number,))
+        row = cur.fetchone()
+        new_ep = (int(row[0]) if row and row[0] else 1) + 1 if row else 1
+        if not row:
+            conn.execute(
+                "INSERT INTO threads (thread_key, episode, status) VALUES (?,?,?)",
+                (number, 1, "active"))
+            new_ep = 1
+        conn.execute(
+            "UPDATE threads SET episode=?, status='active', stage='S0_INITIAL', "
+            "pending_text=NULL, last_draft_text=NULL, send_status=NULL, "
+            "owner_name=COALESCE(?, owner_name), pet_name=COALESCE(?, pet_name), "
+            "stay_dates=COALESCE(?, stay_dates), updated_at=datetime('now') "
+            "WHERE thread_key=?",
+            (new_ep, owner_name, pet_name, stay_dates, number))
+        return new_ep
+
+
+def promote_recent_to_episode(conn: sqlite3.Connection, number: str, episode: int,
+                              window_minutes: int = 15) -> int:
+    """Pull just-arrived, pre-marker messages into the new episode.
+
+    Rover's structured booking block often lands seconds BEFORE the inquiry marker, so
+    it would otherwise be stamped to the previous episode and lost as context.
+
+    Only messages that arrived AFTER the previous marker (and inside the window) are
+    moved — otherwise a returning client's brand-new request would inherit the whole
+    prior conversation, which is exactly what episodes exist to prevent.
+    """
+    with _LOCK, conn:
+        # id of the marker that opened/closed the PREVIOUS episode (excluding the
+        # inquiry marker we just recorded, which is the newest row).
+        cur = conn.execute(
+            "SELECT MAX(id) FROM messages WHERE thread_key=? "
+            "AND raw_subject IN ('inquiry','confirmed','modified') AND episode < ?",
+            (number, episode))
+        row = cur.fetchone()
+        after_id = row[0] if row and row[0] else 0
+        cur = conn.execute(
+            "UPDATE messages SET episode=? WHERE thread_key=? AND episode<? "
+            "AND id > ? "
+            f"AND received_at > datetime('now', '-{int(window_minutes)} minutes')",
+            (episode, number, episode, after_id))
+        return cur.rowcount
+
+
+# --- Returning clients: skip screening for someone who has booked before ---
+def mark_has_booked(conn: sqlite3.Connection, number: str) -> None:
+    """Called when a confirmation marker arrives — they became a real client."""
+    with _LOCK, conn:
+        conn.execute(
+            "UPDATE threads SET has_booked=1, updated_at=datetime('now') "
+            "WHERE thread_key=?", (number,))
+
+
+def has_booked(conn: sqlite3.Connection, number: str) -> bool:
+    with _LOCK:
+        cur = conn.execute("SELECT has_booked FROM threads WHERE thread_key=?", (number,))
+        row = cur.fetchone()
+        return bool(row and row[0])
+
+
+def episode_has_outbound(conn: sqlite3.Connection, number: str) -> bool:
+    """Have we already replied in the CURRENT episode? (Used to fire the returning
+    greeting only once per new request.)"""
+    with _LOCK:
+        cur = conn.execute(
+            "SELECT 1 FROM messages WHERE thread_key=? AND direction='outbound' "
+            "AND episode = COALESCE((SELECT episode FROM threads WHERE thread_key=?), 1) "
+            "LIMIT 1", (number, number))
+        return cur.fetchone() is not None

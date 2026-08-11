@@ -63,3 +63,11 @@ SMS_WEBHOOK_PATH = os.environ.get("SMS_WEBHOOK_PATH", "/sms/webhook")
 SMS_WEBHOOK_SIGNING_KEY = os.environ.get("SMS_WEBHOOK_SIGNING_KEY", "")  # Settings→Webhooks→Signing Key
 SMS_WEBHOOK_CERT = os.environ.get("SMS_WEBHOOK_CERT", "")   # optional TLS (CA-issued for LAN IP)
 SMS_WEBHOOK_KEY = os.environ.get("SMS_WEBHOOK_KEY", "")
+
+
+# --- Returning clients (already booked before): skip the screening playbook ---
+# {owner_name} and {pet_name} are filled from the thread. Editable without code changes.
+RETURNING_CLIENT_TEMPLATE = os.environ.get(
+    "RETURNING_CLIENT_TEMPLATE",
+    "Hey {owner_name}, happy to take care of {pet_name} again, just accepted!",
+)

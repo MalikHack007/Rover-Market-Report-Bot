@@ -27,15 +27,36 @@ def handle_sms(conn, sender: str, body: str, schedule_draft=None):
     known = thread is not None
 
     if msg.kind == "inquiry":
-        store.upsert_sms_thread(conn, sender, owner_name=msg.owner_name,
-                                pet_name=msg.pet_name, stay_dates=_dates(msg),
-                                status="active")
-        log.info("NEW INQUIRY (sms) | %s | owner=%s pet=%s %s | service=%s",
-                 sender, msg.owner_name, msg.pet_name, _dates(msg), msg.service)
+        # Rover reuses a number per CLIENT across bookings, so an inquiry marker on a
+        # thread we've seen before means the SAME client is booking AGAIN. Start a new
+        # episode: reactivate (even from 'converted'), reset the stage, and scope the
+        # drafter's context to this request only — not a conversation from a year ago.
+        episode = store.start_new_episode(conn, sender, owner_name=msg.owner_name,
+                                          pet_name=msg.pet_name, stay_dates=_dates(msg))
+        store.record_sms(conn, sender, msg)
+        # The structured booking block usually lands seconds BEFORE the marker; pull it
+        # into this episode so its drop-off/pick-up details aren't stranded.
+        moved = store.promote_recent_to_episode(conn, sender, episode)
+        if known:
+            log.info("RETURNING CLIENT (sms) | %s | new inquiry, episode %d | "
+                     "owner=%s pet=%s %s", sender, episode, msg.owner_name,
+                     msg.pet_name, _dates(msg))
+        else:
+            log.info("NEW INQUIRY (sms) | %s | owner=%s pet=%s %s | service=%s",
+                     sender, msg.owner_name, msg.pet_name, _dates(msg), msg.service)
+        if moved:
+            log.info("  pulled %d recent message(s) into episode %d", moved, episode)
+        if msg.truncated:
+            log.warning("  truncated SMS on %s — full text needs email fallback (S5)",
+                        sender)
+        return msg
 
     elif msg.kind in ("confirmed", "modified"):
         store.upsert_sms_thread(conn, sender, owner_name=msg.owner_name,
                                 pet_name=msg.pet_name, status="converted")
+        if msg.kind == "confirmed":
+            # They actually booked — a future request skips screening entirely.
+            store.mark_has_booked(conn, sender)
         log.info("%s (sms) | %s | owner=%s -> converted, no action",
                  msg.kind.upper(), sender, msg.owner_name)
 
@@ -105,6 +126,29 @@ def draft_for_thread(conn, number: str) -> None:
     if not any(sp == "Client" for sp, _ in history):
         log.info("  (nothing from the client yet on %s; not drafting)", number)
         return
+
+    # --- Returning client short-circuit ---
+    # They've booked before, and this is the first reply of a NEW request: skip the
+    # whole screening playbook (they've already been through it) and use the template.
+    # No LLM call needed — the wording is fixed. Later messages in this episode fall
+    # through to normal drafting so questions still get real answers.
+    if store.has_booked(conn, number) and not store.episode_has_outbound(conn, number):
+        text = config.RETURNING_CLIENT_TEMPLATE.format(
+            owner_name=owner or "there", pet_name=pet or "your pup")
+        store.set_last_draft(conn, number, text)
+        store.set_pending_text(conn, number, text)
+        # Screening is done for this client; treat them as post-screen.
+        store.update_thread_stage(conn, number, "S3_POST_SCREEN")
+        log.info("  RETURNING CLIENT draft (no API call) | %s\n----- draft -----\n%s\n"
+                 "-----------------", number, text)
+        mid = telegram_notify.send_message(
+            telegram_notify.format_draft_card(
+                owner, dates, "S3_POST_SCREEN", ["returning client — screening skipped"],
+                history, text),
+            reply_markup=telegram_notify.build_sms_keyboard(number))
+        store.link_card(conn, mid, number)
+        return
+
     try:
         d = draft_reply(owner, pet, dates, stage, history)
     except Exception:

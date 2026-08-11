@@ -107,3 +107,69 @@ def test_booking_block_before_marker_opens_pending_then_active(tmp_path):
     assert store.get_thread(conn, A)[4] == "active"     # marker promotes it
     handle_sms(conn, A, "Will you be available?", schedule_draft=scheduled.append)
     assert scheduled == [A]                             # now drafting
+
+
+# --- returning clients: Rover reuses a number per CLIENT across bookings ---
+INQ2 = ("[ New booking request (boarding) from Anika: Teddy (2 yr, 62 lbs) "
+        "01/10/2027 to 01/12/2027. Book @ r.rover.com/new ]")
+
+
+def test_returning_client_reactivates_converted_thread(tmp_path):
+    """A year later, the same number sends a NEW request — must not stay converted."""
+    conn = _db(tmp_path)
+    handle_sms(conn, A, ANIKA_INQ)
+    handle_sms(conn, A, "will you be available?")
+    handle_sms(conn, A, BRENNA_CONF)                    # booked -> converted
+    assert store.get_thread(conn, A)[4] == "converted"
+
+    handle_sms(conn, A, INQ2)                            # returns with a new request
+    owner, pet, dates, stage, status = store.get_thread(conn, A)
+    assert status == "active"                            # reactivated
+    assert stage == "S0_INITIAL"                         # fresh screening
+    assert dates == "01/10/2027 to 01/12/2027"           # new booking's dates
+    assert store.get_episode(conn, A) == 2
+
+
+def test_new_episode_scopes_conversation(tmp_path):
+    """The new request must not inherit the old conversation as context."""
+    conn = _db(tmp_path)
+    handle_sms(conn, A, ANIKA_INQ)
+    handle_sms(conn, A, "old question from last year")
+    store.record_outbound(conn, A, "old reply from last year")
+    handle_sms(conn, A, BRENNA_CONF)
+
+    handle_sms(conn, A, INQ2)
+    handle_sms(conn, A, "new question this time")
+    convo = store.get_conversation(conn, A)
+    texts = [t for _, t in convo]
+    assert "new question this time" in texts
+    assert not any("last year" in t for t in texts)      # old episode excluded
+
+
+def test_returning_client_drafts_again(tmp_path):
+    conn = _db(tmp_path)
+    handle_sms(conn, A, ANIKA_INQ)
+    handle_sms(conn, A, BRENNA_CONF)                     # converted; bot goes quiet
+    scheduled = []
+    handle_sms(conn, A, "hey!", schedule_draft=scheduled.append)
+    assert scheduled == []                                # still quiet
+    handle_sms(conn, A, INQ2)                             # new request
+    handle_sms(conn, A, "are you free in January?", schedule_draft=scheduled.append)
+    assert scheduled == [A]                               # drafting resumes
+
+
+def test_booking_block_before_marker_joins_new_episode(tmp_path):
+    """The block lands seconds before the marker; it must not be stranded."""
+    conn = _db(tmp_path)
+    handle_sms(conn, A, ANIKA_INQ)
+    handle_sms(conn, A, BRENNA_CONF)
+    handle_sms(conn, A, BLOCK)          # new request's block arrives first
+    handle_sms(conn, A, INQ2)           # then the marker
+    convo = store.get_conversation(conn, A)
+    assert any("Boarding Request" in t for _, t in convo)  # pulled into this episode
+
+
+def test_first_ever_inquiry_is_episode_one(tmp_path):
+    conn = _db(tmp_path)
+    handle_sms(conn, A, ANIKA_INQ)
+    assert store.get_episode(conn, A) == 1
