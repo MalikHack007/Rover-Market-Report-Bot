@@ -13,3 +13,4 @@ autoresponder/playbook.md
 autoresponder/faq.mdtoken.json*
 credentials.json*
 *.json.old
+certs/

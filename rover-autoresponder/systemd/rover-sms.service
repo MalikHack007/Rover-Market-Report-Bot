@@ -1,0 +1,33 @@
+# Addendum A: systemd USER service for the SMS pipeline.
+#
+# Install:
+#   cp systemd/rover-sms.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now rover-sms
+# Logs:
+#   journalctl --user -u rover-sms -f
+#
+# NOTE — adb reverse dependency:
+# While the webhook is registered to http://127.0.0.1:8899, the phone reaches this box
+# through the USB tunnel, which does NOT survive an unplug/reboot. ExecStartPre below
+# re-establishes it on every start. Once you move to LAN + TLS (bridged VM IP + a cert
+# from the app's CA), delete the ExecStartPre line and re-register the webhook to
+# https://<vm-ip>:8899/sms/webhook.
+[Unit]
+Description=Rover SMS auto-responder (inbound webhook + drafting + approve-and-send)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=8
+
+[Service]
+Type=simple
+WorkingDirectory=/home/malikhack007/Repos/rover-automations/rover-autoresponder
+# Best-effort: re-create the USB reverse tunnel. '-' means "don't fail if this fails".
+ExecStart=/home/malikhack007/Repos/rover-automations/.venv/bin/python -m autoresponder.sms_main --serve
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target
