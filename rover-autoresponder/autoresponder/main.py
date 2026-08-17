@@ -56,18 +56,23 @@ def dispatch(conn, pm, schedule_draft) -> None:
         )
         schedule_draft(pm.thread_key)
     else:
-        store.set_thread_status(conn, pm.thread_key, "converted")
-        log.info("  no action (%s) | marked converted | subject=%r",
-                 pm.kind, pm.raw_subject)
+        # S6: in fallback mode the email feed must not mutate thread state — SMS owns
+        # the lifecycle. Just store the message (already done) for truncation recovery.
+        if not config.email_fallback_only():
+            store.set_thread_status(conn, pm.thread_key, "converted")
+        log.info("  no action (%s) | subject=%r", pm.kind, pm.raw_subject)
 
 
 def draft_thread(conn, thread_key: str) -> None:
     """Draft the next reply for an active inquiry thread and log it (no sending yet).
 
-    Called by the debouncer once a thread has been quiet: it reads the thread's
-    FULL accumulated history, so a burst of messages produces a single, informed
-    draft that accounts for the stage plus everything the client said.
+    S6: in fallback mode (the default now that SMS is primary) this is a no-op — the
+    email feed exists only to store full message text for truncation recovery. Drafting
+    and Telegram belong to the SMS service.
     """
+    if config.email_fallback_only():
+        log.debug("fallback mode: not drafting email thread %s", thread_key)
+        return
     if not config.ANTHROPIC_API_KEY:
         log.info("  (draft skipped: ANTHROPIC_API_KEY not set)")
         return
@@ -237,18 +242,24 @@ def run_live() -> None:
     conn = store.init_db(config.DB_PATH)
     service = gmail_client.build_service()
 
-    # Phase 5: startup ping + periodic liveness heartbeat to Telegram.
-    start_heartbeat(conn, config.HEARTBEAT_INTERVAL_SEC)
+    fallback = config.email_fallback_only()
+    if fallback:
+        # S6: SMS is primary. Ingest + store only — no Telegram polling (two pollers
+        # on one bot token steal each other's updates) and no heartbeat/cards.
+        log.info("EMAIL FALLBACK MODE: ingest only (feeds SMS truncation recovery)")
+    else:
+        # Phase 5: startup ping + periodic liveness heartbeat to Telegram.
+        start_heartbeat(conn, config.HEARTBEAT_INTERVAL_SEC)
 
-    # Phase 5: the playbook is gitignored, so a fresh deploy could be missing it.
-    # An empty playbook = useless drafts, so surface it loudly rather than silently.
-    from .drafter import load_text
-    if not load_text(config.PLAYBOOK_PATH).strip():
-        log.error("playbook missing/empty at %s — copy playbook.md.example and fill it in",
-                  config.PLAYBOOK_PATH)
-        from . import telegram_notify
-        telegram_notify.send_alert(
-            f"playbook.md missing/empty ({config.PLAYBOOK_PATH}) — drafts will be poor.")
+        # Phase 5: the playbook is gitignored, so a fresh deploy could be missing it.
+        # An empty playbook = useless drafts, so surface it loudly rather than silently.
+        from .drafter import load_text
+        if not load_text(config.PLAYBOOK_PATH).strip():
+            log.error("playbook missing/empty at %s — copy playbook.md.example and fill it in",
+                      config.PLAYBOOK_PATH)
+            from . import telegram_notify
+            telegram_notify.send_alert(
+                f"playbook.md missing/empty ({config.PLAYBOOK_PATH}) — drafts will be poor.")
 
     # Coalesce a burst of messages per thread into one draft call.
     debouncer = Debouncer(config.DEBOUNCE_SECONDS,
@@ -256,11 +267,13 @@ def run_live() -> None:
     log.info("debouncer active: %ss window", config.DEBOUNCE_SECONDS)
 
     # Phase 4: receive button taps in a background thread.
-    threading.Thread(
-        target=poll_loop,
-        args=(lambda d, c, m, q: handle_callback(conn, d, c, m, q),),
-        daemon=True, name="telegram-poller",
-    ).start()
+    # S6: skipped in fallback mode — the SMS service owns the Telegram bot now.
+    if not fallback:
+        threading.Thread(
+            target=poll_loop,
+            args=(lambda d, c, m, q: handle_callback(conn, d, c, m, q),),
+            daemon=True, name="telegram-poller",
+        ).start()
 
     watch_renew.renew_once(service, conn)
     watch_renew.start_daily_renewal(service, conn)

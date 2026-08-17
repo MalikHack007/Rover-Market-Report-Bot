@@ -1,0 +1,37 @@
+# Addendum A / S6 — email pipeline in FALLBACK-ONLY mode.
+#
+# SMS (rover-sms.service) is the primary pipeline: it drafts, sends, and owns Telegram.
+# This service exists only to keep ingesting Rover's email notifications into the SAME
+# database, so S5 truncation recovery has full (un-truncated) message text to draw on.
+#
+# In fallback mode it does NOT draft, does NOT send Telegram cards, and does NOT poll
+# Telegram for button taps — that last part matters: two pollers sharing one bot token
+# steal each other's updates.
+#
+# Install:
+#   cp systemd/rover-email-fallback.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now rover-email-fallback
+# Logs:
+#   journalctl --user -u rover-email-fallback -f
+#
+# NOTE: DB_PATH must match rover-sms.service (same WorkingDirectory here does that),
+# otherwise correlation finds nothing.
+[Unit]
+Description=Rover email ingest (fallback-only feed for SMS truncation recovery)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=8
+
+[Service]
+Type=simple
+WorkingDirectory=/home/malikhack007/Repos/rover-automations/rover-autoresponder
+Environment=PYTHONUNBUFFERED=1
+Environment=EMAIL_MODE=fallback
+ExecStart=/home/malikhack007/Repos/rover-automations/.venv/bin/python -m autoresponder.main
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

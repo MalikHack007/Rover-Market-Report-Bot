@@ -71,3 +71,15 @@ RETURNING_CLIENT_TEMPLATE = os.environ.get(
     "RETURNING_CLIENT_TEMPLATE",
     "Hey {owner_name}, happy to take care of {pet_name} again, just accepted!",
 )
+
+
+# --- Addendum A / S6: cutover. SMS is primary; email is a FALLBACK-ONLY feed. ---
+#   fallback  -> ingest + store only (feeds S5 truncation recovery). No drafting, no
+#                Telegram, no button polling — so it can run alongside the SMS service
+#                without fighting it for Telegram updates or double-replying.
+#   standalone-> the original full email pipeline (pre-SMS behavior).
+EMAIL_MODE = os.environ.get("EMAIL_MODE", "fallback")
+
+
+def email_fallback_only() -> bool:
+    return EMAIL_MODE.strip().lower() != "standalone"
