@@ -69,6 +69,9 @@ _MIGRATIONS = [
     # future request skips screening. (An inquiry that never booked doesn't count.)
     "ALTER TABLE threads ADD COLUMN has_booked INTEGER DEFAULT 0",
     "ALTER TABLE messages ADD COLUMN episode INTEGER DEFAULT 1",
+    # S5: binding to the Gmail thread used for truncation recovery (set once).
+    "ALTER TABLE threads ADD COLUMN email_thread_key TEXT",
+    "ALTER TABLE messages ADD COLUMN truncated INTEGER DEFAULT 0",
     "ALTER TABLE threads ADD COLUMN pending_text TEXT",
     "ALTER TABLE threads ADD COLUMN send_status TEXT",
     "ALTER TABLE threads ADD COLUMN sent_at TEXT",
@@ -496,3 +499,59 @@ def episode_has_outbound(conn: sqlite3.Connection, number: str) -> bool:
             "AND episode = COALESCE((SELECT episode FROM threads WHERE thread_key=?), 1) "
             "LIMIT 1", (number, number))
         return cur.fetchone() is not None
+
+
+# --- Addendum A / S5: truncation recovery + email correlation ---
+def mark_truncated(conn: sqlite3.Connection, number: str, text: str) -> None:
+    """Flag the most recent message on this thread as truncated."""
+    with _LOCK, conn:
+        conn.execute(
+            "UPDATE messages SET truncated=1 WHERE id = ("
+            "  SELECT MAX(id) FROM messages WHERE thread_key=? AND text=?)",
+            (number, text))
+
+
+def list_truncated(conn: sqlite3.Connection, number: str):
+    """(id, text) of unresolved truncated messages in the CURRENT episode."""
+    with _LOCK:
+        cur = conn.execute(
+            "SELECT id, text FROM messages WHERE thread_key=? AND truncated=1 "
+            "AND episode = COALESCE((SELECT episode FROM threads WHERE thread_key=?), 1) "
+            "ORDER BY id", (number, number))
+        return cur.fetchall()
+
+
+def replace_message_text(conn: sqlite3.Connection, msg_id: int, full_text: str) -> None:
+    """Swap in the recovered full text and clear the truncated flag."""
+    with _LOCK, conn:
+        conn.execute("UPDATE messages SET text=?, truncated=0 WHERE id=?",
+                     (full_text, msg_id))
+
+
+def bind_email_thread(conn: sqlite3.Connection, number: str, email_thread_key: str) -> None:
+    with _LOCK, conn:
+        conn.execute(
+            "UPDATE threads SET email_thread_key=?, updated_at=datetime('now') "
+            "WHERE thread_key=?", (email_thread_key, number))
+
+
+def get_email_thread_key(conn: sqlite3.Connection, number: str):
+    with _LOCK:
+        cur = conn.execute("SELECT email_thread_key FROM threads WHERE thread_key=?",
+                           (number,))
+        row = cur.fetchone()
+        return row[0] if row else None
+
+
+def list_email_threads(conn: sqlite3.Connection):
+    """(thread_key, owner_name, pet_name) for Gmail-sourced threads only.
+
+    Email threads are identifiable because their messages carry a gmail_msg_id;
+    SMS threads (keyed by phone number) never do.
+    """
+    with _LOCK:
+        cur = conn.execute(
+            "SELECT t.thread_key, t.owner_name, t.pet_name FROM threads t "
+            "WHERE EXISTS (SELECT 1 FROM messages m WHERE m.thread_key=t.thread_key "
+            "              AND m.gmail_msg_id IS NOT NULL AND m.direction='inbound')")
+        return cur.fetchall()

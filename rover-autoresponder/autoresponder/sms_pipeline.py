@@ -85,7 +85,11 @@ def handle_sms(conn, sender: str, body: str, schedule_draft=None):
 
     store.record_sms(conn, sender, msg)
     if msg.truncated:
-        log.warning("  truncated SMS on %s — full text needs email fallback (S5)", sender)
+        # S5: flag it; recovery is attempted at draft time (the email notification
+        # may not have arrived yet when the SMS lands).
+        store.mark_truncated(conn, sender, msg.text)
+        log.warning("  truncated SMS on %s — will try email recovery before drafting",
+                    sender)
     return msg
 
 
@@ -119,6 +123,14 @@ def draft_for_thread(conn, number: str) -> None:
 
     # SMS mirrors the whole thread, so the drafter sees BOTH sides (labelled
     # Client/You) — better stage inference than the client-only email view.
+    # S5: recover any truncated messages from the correlated email thread first, so
+    # the drafter reads the client's FULL words (questionnaire answers get cut most).
+    try:
+        from .truncation import resolve_truncated
+        resolve_truncated(conn, number)
+    except Exception:
+        log.exception("  truncation recovery failed for %s (drafting anyway)", number)
+
     history = store.get_conversation(conn, number)
     if not history:
         log.info("  (no client messages yet on %s; nothing to draft)", number)
@@ -172,12 +184,18 @@ def draft_for_thread(conn, number: str) -> None:
     store.set_last_draft(conn, number, d.draft_text)
     # S4: this is what "Approve & Send" will transmit (until you edit it).
     store.set_pending_text(conn, number, d.draft_text)
+    # S5: if a truncated message never got recovered, say so on the card — the draft
+    # is based on a partial client message and deserves a closer read.
+    flags = list(d.flags)
+    if store.list_truncated(conn, number):
+        flags.append("⚠️ a client message was cut off by SMS and couldn't be recovered "
+                     "— check the full message on Rover")
     log.info("  DRAFT [%s]%s (from %d msg)\n----- draft -----\n%s\n-----------------",
-             d.stage, f" flags={d.flags}" if d.flags else "", len(history), d.draft_text)
+             d.stage, f" flags={flags}" if flags else "", len(history), d.draft_text)
     # S4: card carries Approve & Send / Edit / tone / terminal buttons. Link the card
     # to the thread so replying to it edits this draft.
     mid = telegram_notify.send_message(
-        telegram_notify.format_draft_card(owner, dates, d.stage, d.flags,
+        telegram_notify.format_draft_card(owner, dates, d.stage, flags,
                                           history, d.draft_text,
                                           needs_review=d.off_playbook),
         reply_markup=telegram_notify.build_sms_keyboard(number))
