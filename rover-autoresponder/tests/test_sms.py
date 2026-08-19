@@ -17,7 +17,7 @@ class _Resp:
 
 def test_send_builds_correct_request(monkeypatch):
     captured = {}
-    def fake_post(url, params, json, auth, timeout):
+    def fake_post(url, params=None, json=None, auth=None, timeout=None):
         captured.update(url=url, params=params, json=json)
         return _Resp(202, {"id": "gw-123", "state": "Pending"})
     monkeypatch.setattr(sms_gateway.requests, "post", fake_post)
@@ -31,7 +31,8 @@ def test_send_builds_correct_request(monkeypatch):
     assert captured["json"]["id"] == "idem-1"
 
 def test_send_returns_none_on_failure(monkeypatch):
-    monkeypatch.setattr(sms_gateway.requests, "post", lambda **k: _Resp(500))
+    monkeypatch.setattr(sms_gateway.requests, "post",
+                        lambda *a, **k: _Resp(500))
     gw = sms_gateway.SmsGateForAndroid(base_url="http://phone:8080", username="u", password="p")
     assert gw.send("+1555", "x") is None
 
@@ -100,3 +101,27 @@ def test_receiver_rejects_bad_signature():
         assert len(got) == 1
     finally:
         httpd.shutdown()
+
+
+def test_send_retries_on_transient_failure(monkeypatch):
+    """A briefly-asleep phone shouldn't surface as a hard SEND FAILED."""
+    monkeypatch.setattr(sms_gateway.time, "sleep", lambda s: None)   # no real backoff
+    calls = {"n": 0}
+    def flaky_post(url, params=None, json=None, auth=None, timeout=None):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise requests.exceptions.ConnectTimeout("phone asleep")
+        return _Resp(202, {"id": "gw-ok"})
+    monkeypatch.setattr(sms_gateway.requests, "post", flaky_post)
+    gw = sms_gateway.SmsGateForAndroid(base_url="http://phone:8080", username="u", password="p")
+    assert gw.send("+1555", "hello") == "gw-ok"      # recovered on the 3rd attempt
+    assert calls["n"] == 3
+
+
+def test_send_gives_up_after_retries(monkeypatch):
+    monkeypatch.setattr(sms_gateway.time, "sleep", lambda s: None)
+    def always_fail(url, params=None, json=None, auth=None, timeout=None):
+        raise requests.exceptions.ConnectTimeout("unreachable")
+    monkeypatch.setattr(sms_gateway.requests, "post", always_fail)
+    gw = sms_gateway.SmsGateForAndroid(base_url="http://phone:8080", username="u", password="p")
+    assert gw.send("+1555", "hello") is None

@@ -12,6 +12,7 @@ We pass ?skipPhoneValidation=true because Rover's per-conversation relay numbers
 may not be clean E.164.
 """
 import logging
+import time
 
 import requests
 from requests.auth import HTTPBasicAuth
@@ -52,21 +53,34 @@ class SmsGateForAndroid(SmsGateway):
         if message_id:
             payload["id"] = message_id
         url = f"{self.base}{config.SMS_GATEWAY_SEND_PATH}"
-        try:
-            r = requests.post(
-                url,
-                params={"skipPhoneValidation": "true"},
-                json=payload,
-                auth=self.auth,
-                timeout=15,
-            )
-        except Exception:
-            log.exception("SMS send error to %s", number)
-            return None
-        if r.status_code not in (200, 201, 202):
+        # The phone can be briefly unreachable (Wi-Fi power save / doze), which showed
+        # up as a hard "SEND FAILED" on the first tap and success on a retry. Retry a
+        # few times with backoff, and keep the connect timeout short so a dead attempt
+        # is abandoned quickly rather than blowing past Telegram's callback deadline.
+        last_error = None
+        for attempt in range(1, config.SMS_SEND_RETRIES + 1):
+            try:
+                r = requests.post(
+                    url,
+                    params={"skipPhoneValidation": "true"},
+                    json=payload,
+                    auth=self.auth,
+                    timeout=(5, 15),      # (connect, read)
+                )
+            except Exception as e:
+                last_error = e
+                log.warning("SMS send attempt %d/%d to %s failed: %s",
+                            attempt, config.SMS_SEND_RETRIES, number, type(e).__name__)
+                if attempt < config.SMS_SEND_RETRIES:
+                    time.sleep(2 * attempt)      # 2s, 4s, ...
+                continue
+            if r.status_code in (200, 201, 202):
+                try:
+                    return r.json().get("id")
+                except Exception:
+                    return None
             log.error("SMS send failed: %s %s", r.status_code, r.text[:300])
-            return None
-        try:
-            return r.json().get("id")
-        except Exception:
-            return None
+            return None       # a real HTTP rejection won't fix itself on retry
+        log.error("SMS send to %s failed after %d attempts: %s",
+                  number, config.SMS_SEND_RETRIES, last_error)
+        return None

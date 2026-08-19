@@ -56,6 +56,8 @@ SMS_GATEWAY_USERNAME = os.environ.get("SMS_GATEWAY_USERNAME", "")   # app Home t
 SMS_GATEWAY_PASSWORD = os.environ.get("SMS_GATEWAY_PASSWORD", "")
 # LOCAL mode uses bare "/message"; CLOUD mode would be "/3rdparty/v1/messages".
 SMS_GATEWAY_SEND_PATH = os.environ.get("SMS_GATEWAY_SEND_PATH", "/message")
+# Retries for a briefly-unreachable phone (Wi-Fi power save / doze).
+SMS_SEND_RETRIES = int(os.environ.get("SMS_SEND_RETRIES", "3"))
 # Inbound: the phone POSTs webhooks to this receiver on the box.
 SMS_WEBHOOK_HOST = os.environ.get("SMS_WEBHOOK_HOST", "0.0.0.0")
 SMS_WEBHOOK_PORT = int(os.environ.get("SMS_WEBHOOK_PORT", "8899"))

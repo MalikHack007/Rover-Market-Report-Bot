@@ -47,25 +47,40 @@ def dispatch_update(upd: dict, on_callback, allowed_chat, on_text=None) -> None:
             on_text(text, chat_id, reply_to)
 
 
-def poll_loop(on_callback, stop_event=None, long_poll_sec: int = 25,
+def poll_loop(on_callback, stop_event=None, long_poll_sec: int = 10,
               on_text=None) -> None:
+    """Long-poll Telegram for button taps / text replies.
+
+    Timeout tuning: a long-poll connection can go stale silently (NAT timeout, Wi-Fi
+    blip, Telegram dropping it). While it's dead, taps land in a black hole until the
+    read timeout fires. Keeping the poll short (10s) and the read timeout only a little
+    longer (+8s) means a stale connection is detected in seconds instead of ~40, which
+    is what caused button taps to take ~30s to register.
+
+    Cost of the shorter poll is negligible: an empty getUpdates every 10s is a tiny
+    request, and Telegram is designed for exactly this pattern.
+    """
     if not (config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_CHAT_ID):
         log.info("telegram poll disabled (no token/chat)")
         return
     url = _API.format(token=config.TELEGRAM_BOT_TOKEN, method="getUpdates")
     offset = None
-    log.info("telegram button poller active")
+    session = requests.Session()          # reuse the TCP/TLS connection between polls
+    consecutive_errors = 0
+    log.info("telegram button poller active (%ss long-poll)", long_poll_sec)
     while not (stop_event and stop_event.is_set()):
         try:
             allowed = ["callback_query"] + (["message"] if on_text else [])
             params = {"timeout": long_poll_sec, "allowed_updates": allowed}
             if offset is not None:
                 params["offset"] = offset
-            r = requests.get(url, params=params, timeout=long_poll_sec + 15)
+            # read timeout just past the poll window: detect a dead connection fast.
+            r = session.get(url, params=params, timeout=(10, long_poll_sec + 8))
             if r.status_code != 200:
                 log.error("getUpdates failed: %s %s", r.status_code, r.text[:200])
                 time.sleep(3)
                 continue
+            consecutive_errors = 0
             for upd in r.json().get("result", []):
                 offset = upd["update_id"] + 1
                 try:
@@ -73,6 +88,18 @@ def poll_loop(on_callback, stop_event=None, long_poll_sec: int = 25,
                                     on_text=on_text)
                 except Exception:
                     log.exception("callback handling failed")
+        except requests.exceptions.RequestException as e:
+            # A stale long-poll timing out is normal and self-healing. Only escalate
+            # to a full traceback if it keeps happening (a real connectivity problem).
+            consecutive_errors += 1
+            if consecutive_errors <= 3:
+                log.info("getUpdates reconnecting (%s)", type(e).__name__)
+            else:
+                log.warning("getUpdates failing repeatedly (%d in a row): %s",
+                            consecutive_errors, e)
+            session.close()
+            session = requests.Session()   # fresh connection after a failure
+            time.sleep(2)
         except Exception:
             log.exception("getUpdates loop error")
             time.sleep(3)
