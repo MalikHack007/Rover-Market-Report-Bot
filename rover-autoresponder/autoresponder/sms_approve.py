@@ -11,6 +11,7 @@ auto-send anywhere. Guarantees:
                    and a failure alerts rather than silently vanishing.
 """
 import logging
+import re
 
 from . import config, store, telegram_notify as tg
 from .sms_gateway import SmsGateForAndroid
@@ -146,12 +147,26 @@ def handle_callback(conn, data: str, chat_id, message_id, cq_id) -> None:
 
 
 def handle_text_reply(conn, text: str, chat_id, reply_to_message_id) -> bool:
-    """A plain Telegram message replying to a card = an edit of that draft."""
+    """A plain Telegram message replying to a card.
+
+    "/pet Maple" or "/owner Daniel" sets a name manually (name-recovery layer 4);
+    anything else is treated as an edit of the draft.
+    """
     if not reply_to_message_id:
         return False
     number = store.thread_for_card(conn, reply_to_message_id)
     if not number:
         return False
+
+    m = re.match(r"^\s*/(pet|owner)\s+(.+)$", text or "", re.IGNORECASE)
+    if m:
+        from .identity import set_manual
+        field, value = m.group(1).lower(), m.group(2).strip()
+        if set_manual(conn, number, field, value):
+            tg.send_message(f"✅ {field.capitalize()} name set to <b>{tg._esc(value)}</b>. "
+                            f"Tap 🔁 Regenerate to redraft with it.")
+        return True
+
     apply_edit(conn, number, text, chat_id, reply_to_message_id)
     return True
 

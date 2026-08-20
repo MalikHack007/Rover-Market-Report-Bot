@@ -33,6 +33,9 @@ class Draft:
     off_playbook: bool
     flags: List[str] = field(default_factory=list)
     raw: str = ""
+    # Name recovery layer 3: the pet's name inferred from the client's own message,
+    # used when the inquiry marker (which normally carries it) never arrived.
+    inferred_pet: str = ""
 
 
 def load_text(path: str) -> str:
@@ -146,4 +149,5 @@ def draft_reply(owner, pet, dates, stored_stage, history,
         off_playbook=bool(data.get("off_playbook")),
         flags=list(data.get("flags") or []),
         raw=raw,
+        inferred_pet=(data.get("pet_name") or "").strip(),
     )

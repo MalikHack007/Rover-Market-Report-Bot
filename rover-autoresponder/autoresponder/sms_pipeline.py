@@ -61,25 +61,31 @@ def handle_sms(conn, sender: str, body: str, schedule_draft=None):
                  msg.kind.upper(), sender, msg.owner_name)
 
     else:  # ordinary client message
+        if msg.is_booking_block and (not known or _status(conn, sender) != "active"):
+            # Rover only auto-sends "Boarding Request - One Time: Drop-off... Pick-up..."
+            # when a client submits a booking request, so the block ALONE is proof of a
+            # new inquiry. Open it immediately rather than waiting for the marker —
+            # the marker is a nice-to-have (owner/pet/service) that sometimes never
+            # arrives, and waiting for it silently stranded real inquiries.
+            # This also covers a RETURNING client whose block precedes the marker.
+            episode = store.start_new_episode(conn, sender)
+            store.record_sms(conn, sender, msg)
+            log.info("NEW INQUIRY (sms, booking block) | %s | episode %d | "
+                     "awaiting marker for owner/pet details", sender, episode)
+            if schedule_draft:
+                schedule_draft(sender)
+            return msg
         if not known:
-            # The auto-sent "Boarding Request - One Time:" block often arrives just
-            # BEFORE the inquiry marker. Treat it as a provisional inquiry opener so
-            # the opening burst isn't stranded in 'unknown'; a marker landing next
-            # promotes it to active. Anything else from an unseen number stays out.
-            initial = "pending" if msg.is_booking_block else "unknown"
-            store.upsert_sms_thread(conn, sender, status=initial)
-            log.info("new sms thread | %s | %s", sender,
-                     "booking block seen; awaiting inquiry marker"
-                     if msg.is_booking_block else
-                     "no inquiry marker seen; not drafting")
+            # Some other first message from an unseen number — stay out of it.
+            store.upsert_sms_thread(conn, sender, status="unknown")
+            log.info("new sms thread | %s | no booking request seen; not drafting",
+                     sender)
         status = (store.get_thread(conn, sender) or [None] * 5)[4]
-        if status == "active":
+        if status in ("active", "pending"):     # 'pending' = legacy rows, treat as active
             log.info("CLIENT MSG (sms) | %s | %r%s", sender, msg.text[:120],
                      " [TRUNCATED]" if msg.truncated else "")
             if schedule_draft:
                 schedule_draft(sender)     # S3 wires this to the drafter
-        elif status == "pending":
-            log.info("pending thread (sms) | %s | holding until inquiry marker", sender)
         else:
             log.info("message on %s thread (sms) | %s | ignored", status, sender)
 
@@ -91,6 +97,11 @@ def handle_sms(conn, sender: str, body: str, schedule_draft=None):
         log.warning("  truncated SMS on %s — will try email recovery before drafting",
                     sender)
     return msg
+
+
+def _status(conn, number: str):
+    row = store.get_thread(conn, number)
+    return row[4] if row else None
 
 
 def _dates(msg) -> str:
@@ -117,9 +128,18 @@ def draft_for_thread(conn, number: str) -> None:
     if not row:
         return
     owner, pet, dates, stage, status = row
-    if status != "active" or not should_draft(status):
+    if status not in ("active", "pending") or not should_draft(status):
         log.info("  (thread %s is %s; not drafting)", number, status)
         return
+
+    # Name recovery layer 2: the inquiry marker doesn't always arrive (~95%), but the
+    # owner's name is ALWAYS in the email subject. Correlate by content and lift it.
+    if not owner or not pet:
+        try:
+            from .identity import recover_names_from_email
+            owner, pet = recover_names_from_email(conn, number)
+        except Exception:
+            log.exception("  name recovery from email failed for %s", number)
 
     # SMS mirrors the whole thread, so the drafter sees BOTH sides (labelled
     # Client/You) — better stage inference than the client-only email view.
@@ -169,6 +189,15 @@ def draft_for_thread(conn, number: str) -> None:
 
     store.update_thread_stage(conn, number, d.stage)
 
+    # Name recovery layer 3: the drafter reports a pet name it inferred from the
+    # client's own message (costs no extra API call).
+    if d.inferred_pet and not pet:
+        try:
+            from .identity import apply_inferred_pet
+            pet = apply_inferred_pet(conn, number, d.inferred_pet) or pet
+        except Exception:
+            log.exception("  storing inferred pet name failed for %s", number)
+
     # Off-playbook no longer means "no draft". The model always drafts a safe,
     # non-committal attempt; we just flag the card so you read it carefully. You can
     # then edit it in Telegram and send — no need to go handle it elsewhere.
@@ -190,6 +219,11 @@ def draft_for_thread(conn, number: str) -> None:
     if store.list_truncated(conn, number):
         flags.append("⚠️ a client message was cut off by SMS and couldn't be recovered "
                      "— check the full message on Rover")
+    # Name recovery layer 4: nothing found it — tell you how to set it by hand.
+    if not pet:
+        flags.append("pet name unknown — reply “/pet Maple” to set it")
+    if not owner:
+        flags.append("owner name unknown — reply “/owner Daniel” to set it")
     log.info("  DRAFT [%s]%s (from %d msg)\n----- draft -----\n%s\n-----------------",
              d.stage, f" flags={flags}" if flags else "", len(history), d.draft_text)
     # S4: card carries Approve & Send / Edit / tone / terminal buttons. Link the card
