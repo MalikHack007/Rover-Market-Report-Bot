@@ -107,3 +107,65 @@ def test_untruncated_messages_untouched(tmp_path):
     handle_sms(conn, A, INQ)
     handle_sms(conn, A, "short and complete message")
     assert store.list_truncated(conn, A) == []
+
+
+# --- regression: the real Cristian case (2026-08-19) ---
+# Two email threads for one client, NEITHER with a pet name, and the conversation
+# split across both. Name correlation is ambiguous; content matching must still win.
+CRIS = "+13103073340"
+CRIS_TRUNC = ("Hi Paul and Karina! I am looking for somebody to watch my 11 mo puppy "
+              "Mazzy for the weekend. She is a sweet and energeti... "
+              "(more at https://r.rover.com/abc )")
+# Email wraps lines where SMS doesn't — matching must be whitespace-insensitive.
+CRIS_FULL = ("Hi Paul and Karina! I am looking for somebody to watch my 11 mo puppy Mazzy\n"
+             "for the weekend. She is a sweet and energetic puppy who loves people. She\n"
+             "is on a once-daily antibiotic for her leg recovery.")
+
+
+def _cristian_setup(conn):
+    handle_sms(conn, CRIS, "[ New booking request (boarding) from Cristian: Mazzy "
+                           "(10 mos, 41 lbs) 08/20/2026 to 08/23/2026. Book @ r.rover.com/x ]")
+    handle_sms(conn, CRIS, CRIS_TRUNC)
+    _add_email_thread(conn, "1a0169c3b9078342", "Cristian", None,
+                      ["Boarding Request - One Time:\nDrop-off: Thu, Aug 20", CRIS_FULL])
+    _add_email_thread(conn, "1a01a741f29fd9f7", "Cristian", None,
+                      ["Apologies for incorrect name address."])
+
+
+def test_recovers_despite_ambiguous_name_and_missing_pet(tmp_path):
+    conn = _db(tmp_path)
+    _cristian_setup(conn)
+    # name correlation genuinely can't resolve this
+    assert truncation.find_email_thread(conn, "Cristian", "Mazzy") is None
+    # ...but content matching does
+    assert truncation.resolve_truncated(conn, CRIS) == 1
+    convo = [t for _, t in store.get_conversation(conn, CRIS)]
+    assert any("antibiotic" in t for t in convo)
+    assert not any("more at" in t for t in convo)
+
+
+def test_matching_is_whitespace_insensitive(tmp_path):
+    """Email hard-wraps lines; the SMS version doesn't."""
+    conn = _db(tmp_path)
+    _cristian_setup(conn)
+    full = truncation.recover_full_text(conn, CRIS, CRIS_TRUNC)
+    assert full is not None
+    assert "\n" in full                      # the wrapped email version
+
+
+def test_recovery_searches_all_threads_not_just_bound(tmp_path):
+    """A conversation split across threads: the bound one may lack the message."""
+    conn = _db(tmp_path)
+    _cristian_setup(conn)
+    store.bind_email_thread(conn, CRIS, "1a01a741f29fd9f7")   # bound to the WRONG one
+    assert truncation.resolve_truncated(conn, CRIS) == 1       # still found elsewhere
+
+
+def test_no_false_positive_on_different_client(tmp_path):
+    conn = _db(tmp_path)
+    handle_sms(conn, CRIS, "[ New booking request (boarding) from Cristian: Mazzy "
+                           "(10 mos, 41 lbs) 08/20/2026 to 08/23/2026. Book @ r.rover.com/x ]")
+    handle_sms(conn, CRIS, CRIS_TRUNC)
+    _add_email_thread(conn, "other", "Someone Else", "Rex",
+                      ["Completely unrelated message about a different dog entirely."])
+    assert truncation.resolve_truncated(conn, CRIS) == 0       # nothing matches -> no guess

@@ -76,27 +76,48 @@ def find_email_thread(conn, owner_name: str, pet_name: str = None):
 def recover_full_text(conn, number: str, truncated_text: str):
     """Return the full version of a truncated SMS, or None if unavailable.
 
-    Looks in the bound email thread for a message whose start matches the SMS prefix.
-    """
-    email_thread = store.get_email_thread_key(conn, number)
-    if not email_thread:
-        row = store.get_thread(conn, number)
-        if not row:
-            return None
-        owner, pet = row[0], row[1]
-        email_thread = find_email_thread(conn, owner, pet)
-        if not email_thread:
-            return None
-        store.bind_email_thread(conn, number, email_thread)   # one-time binding
-        log.info("correlated %s -> email thread %s", number, email_thread)
+    Strategy is CONTENT-FIRST: find an email message whose normalized text starts with
+    the truncated message's prefix. Matching text is near-conclusive evidence — much
+    stronger than a name match — and it solves two real cases that name correlation
+    can't:
+      * the same client has SEVERAL email threads (ambiguous by name, and Rover often
+        omits the pet name from the email thread, so it can't be narrowed), and
+      * one conversation's messages are SPLIT across those threads, so no single
+        "correct" thread contains everything.
 
+    The bound email thread (if any) is searched first as an optimization, then all
+    email threads. Name correlation is still recorded when it succeeds, purely as a hint.
+    """
     prefix = prefix_for_match(truncated_text)
     if not prefix:
         return None
-    for text in store.get_thread_messages(conn, email_thread):
-        norm = re.sub(r"\s+", " ", text or "").strip().lower()
-        if norm.startswith(prefix) and len(text) > len(truncated_text):
-            return text
+
+    def _scan(thread_key):
+        for text in store.get_thread_messages(conn, thread_key):
+            if not text:
+                continue
+            # Email hard-wraps lines where SMS doesn't, so compare whitespace-collapsed.
+            norm = re.sub(r"\s+", " ", text).strip().lower()
+            if norm.startswith(prefix) and len(text) > len(truncated_text):
+                return text
+        return None
+
+    bound = store.get_email_thread_key(conn, number)
+    if bound:
+        hit = _scan(bound)
+        if hit:
+            return hit
+
+    for thread_key, _owner, _pet in store.list_email_threads(conn):
+        if thread_key == bound:
+            continue
+        hit = _scan(thread_key)
+        if hit:
+            if not bound:
+                store.bind_email_thread(conn, number, thread_key)
+                log.info("correlated %s -> email thread %s (by content)",
+                         number, thread_key)
+            return hit
     return None
 
 
