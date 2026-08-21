@@ -5,7 +5,7 @@ from autoresponder import store, config, commands
 from autoresponder import telegram_notify as tg
 from autoresponder import sms_approve
 from autoresponder.commands import handle_command
-from autoresponder.scheduling import DROPOFF, PICKUP, PENDING, CANCELLED
+from autoresponder.scheduling import DROPOFF, MEET_GREET, PICKUP, PENDING, CANCELLED
 from tests.test_scheduling import FakeCalendar
 
 
@@ -116,7 +116,7 @@ def test_unknown_id_handled(tmp_path, monkeypatch):
 
 def test_help_and_non_commands(tmp_path, monkeypatch):
     conn = _db(tmp_path, monkeypatch)
-    assert "Private booking commands" in handle_command(conn, "/help")
+    assert "/booking" in handle_command(conn, "/help")
     assert handle_command(conn, "just a normal message") is None
 
 
@@ -139,3 +139,97 @@ def test_pet_command_still_routes_to_name_recovery(tmp_path, monkeypatch):
     store.link_card(conn, 77, "+1555")
     assert sms_approve.handle_text_reply(conn, "/pet Maple", 1, 77) is True
     assert store.get_thread(conn, "+1555")[1] == "Maple"
+
+
+# --- single-leg links ---
+def test_dropoff_only_creates_one_event(tmp_path, monkeypatch):
+    conn = _db(tmp_path, monkeypatch)
+    cal = FakeCalendar()
+    out = handle_command(conn, f"/dropoff Willow {_future(10)} Sarah", cal)
+    assert "Drop-off" in out and "Willow" in out
+    assert "cal.com/malik/dropoff" in out
+    assert len(cal.created) == 1                       # just the one leg
+    rows = store.list_scheduling_events(conn)
+    assert len(rows) == 1 and rows[0][3] == DROPOFF
+
+
+def test_pickup_only_creates_one_event(tmp_path, monkeypatch):
+    conn = _db(tmp_path, monkeypatch)
+    cal = FakeCalendar()
+    out = handle_command(conn, f"/pickup Willow {_future(12)}", cal)
+    assert "Pick-up" in out and "cal.com/malik/pickup" in out
+    assert len(cal.created) == 1
+    assert store.list_scheduling_events(conn)[0][3] == PICKUP
+
+
+def test_single_legs_for_same_pet_dont_collide(tmp_path, monkeypatch):
+    """A standalone drop-off and pick-up for one pet must be separate entries."""
+    conn = _db(tmp_path, monkeypatch)
+    cal = FakeCalendar()
+    handle_command(conn, f"/dropoff Willow {_future(10)}", cal)
+    handle_command(conn, f"/pickup Willow {_future(12)}", cal)
+    rows = store.list_scheduling_events(conn)
+    assert len(rows) == 2
+    assert {r[3] for r in rows} == {DROPOFF, PICKUP}
+    assert rows[0][1] != rows[1][1]                    # different thread keys
+
+
+def test_duplicate_single_leg_refused(tmp_path, monkeypatch):
+    conn = _db(tmp_path, monkeypatch)
+    cal = FakeCalendar()
+    handle_command(conn, f"/dropoff Willow {_future(10)}", cal)
+    out = handle_command(conn, f"/dropoff Willow {_future(10)}", cal)
+    assert "already exists" in out
+    assert len(cal.created) == 1
+
+
+def test_single_leg_bad_date(tmp_path, monkeypatch):
+    conn = _db(tmp_path, monkeypatch)
+    assert "Couldn't read" in handle_command(conn, "/dropoff Willow notadate",
+                                             FakeCalendar())
+
+
+def test_single_leg_usage_when_incomplete(tmp_path, monkeypatch):
+    conn = _db(tmp_path, monkeypatch)
+    assert "Usage" in handle_command(conn, "/dropoff Willow", FakeCalendar())
+
+
+# --- meet & greet ---
+def test_meetgreet_has_no_date_and_no_calendar_hold(tmp_path, monkeypatch):
+    """Open range: nothing is placed until the client actually books."""
+    conn = _db(tmp_path, monkeypatch)
+    cal = FakeCalendar()
+    out = handle_command(conn, "/meetgreet Willow Sarah", cal)
+    assert "Meet" in out and "cal.com/malik/meet-greet" in out
+    assert "date=" not in out                           # open range
+    assert cal.created == []                            # no placeholder yet
+    rows = store.list_scheduling_events(conn)
+    assert len(rows) == 1 and rows[0][6] is None        # no target date
+
+
+def test_meetgreet_needs_a_pet(tmp_path, monkeypatch):
+    conn = _db(tmp_path, monkeypatch)
+    assert "Usage" in handle_command(conn, "/meetgreet", FakeCalendar())
+
+
+# --- re-showing links ---
+def test_links_reshows_both_legs(tmp_path, monkeypatch):
+    conn = _db(tmp_path, monkeypatch)
+    cal = FakeCalendar()
+    handle_command(conn, f"/booking Willow {_future(10)} {_future(12)} Sarah", cal)
+    ev_id = store.list_scheduling_events(conn)[0][0]
+    out = handle_command(conn, f"/links {ev_id}")
+    assert "cal.com/malik/dropoff" in out and "cal.com/malik/pickup" in out
+    assert "Willow" in out
+
+
+def test_links_unknown_id(tmp_path, monkeypatch):
+    conn = _db(tmp_path, monkeypatch)
+    assert "No scheduling event" in handle_command(conn, "/links 999")
+
+
+def test_help_lists_the_new_commands(tmp_path, monkeypatch):
+    conn = _db(tmp_path, monkeypatch)
+    out = handle_command(conn, "/help")
+    for c in ("/dropoff", "/pickup", "/meetgreet", "/links"):
+        assert c in out

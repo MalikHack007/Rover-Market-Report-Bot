@@ -21,8 +21,8 @@ from datetime import datetime
 
 from . import store
 from .scheduling import (
-    CANCELLED, DROPOFF, PICKUP, build_link, default_slot, on_booking_confirmed,
-    ensure_links, title, PENDING,
+    CANCELLED, DROPOFF, MEET_GREET, PICKUP, build_link, default_slot,
+    on_booking_confirmed, ensure_links, title, PENDING,
 )
 
 log = logging.getLogger(__name__)
@@ -30,10 +30,16 @@ log = logging.getLogger(__name__)
 PRIVATE = "private"
 
 HELP = (
-    "<b>Private booking commands</b>\n"
+    "<b>Bookings</b>\n"
     "<code>/booking Willow 2026-09-01 2026-09-06 Sarah</code>\n"
-    "   create a booking (owner optional) → calendar events + links\n"
+    "   full booking (owner optional) → both events + both links\n\n"
+    "<b>Single links</b>\n"
+    "<code>/dropoff Willow 2026-09-01 [owner]</code>\n"
+    "<code>/pickup Willow 2026-09-06 [owner]</code>\n"
+    "<code>/meetgreet Willow [owner]</code>  (open range — next 7 days)\n\n"
+    "<b>Manage</b>\n"
     "<code>/bookings</code>  list upcoming\n"
+    "<code>/links 12</code>  re-show the links for an entry\n"
     "<code>/movebooking 12 2026-09-03 2026-09-08</code>  change dates\n"
     "<code>/cancelbooking 12</code>  delete its events\n\n"
     "Private clients text your other line, so the bot never messages them — "
@@ -53,9 +59,15 @@ def parse_date(text):
     return parse_booking_date(text)
 
 
-def _thread_key(pet, start_day):
-    slug = re.sub(r"[^a-z0-9]+", "", (pet or "pet").lower())[:20] or "pet"
-    return f"{PRIVATE}:{slug}-{start_day:%Y%m%d}"
+def _slug(pet):
+    return re.sub(r"[^a-z0-9]+", "", (pet or "pet").lower())[:20] or "pet"
+
+
+def _thread_key(pet, start_day, kind=None):
+    """Full bookings key on pet+date; single-leg entries add the kind so a standalone
+    drop-off and pick-up for the same pet can't collide."""
+    base = f"{PRIVATE}:{_slug(pet)}-{start_day:%Y%m%d}"
+    return f"{base}-{kind}" if kind else base
 
 
 def cmd_booking(conn, args, calendar=None):
@@ -110,7 +122,12 @@ def cmd_bookings(conn):
         ev_id, thread_key, _ep, kind, source, status, target, sched = r[:8]
         t = store.get_thread(conn, thread_key)
         who = (t[1] if t and t[1] else thread_key)
-        when = (sched[:16].replace("T", " ") if sched else f"{target} (unscheduled)")
+        if sched:
+            when = sched[:16].replace("T", " ")
+        elif target:
+            when = f"{target} (unscheduled)"
+        else:
+            when = "open range (unscheduled)"
         tag = " 🏠" if source == PRIVATE else ""
         lines.append(f"<code>{ev_id:>3}</code> {who} {kind} — {when}{tag}")
     lines.append("\n🏠 = private booking")
@@ -195,6 +212,14 @@ def handle_command(conn, text, calendar=None):
             return cmd_booking(conn, args, calendar)
         if cmd == "bookings":
             return cmd_bookings(conn)
+        if cmd in ("dropoff", "drop-off", "drop"):
+            return cmd_single(conn, DROPOFF, args, calendar)
+        if cmd in ("pickup", "pick-up", "pick"):
+            return cmd_single(conn, PICKUP, args, calendar)
+        if cmd in ("meetgreet", "meet-greet", "mg"):
+            return cmd_meetgreet(conn, args, calendar)
+        if cmd == "links":
+            return cmd_links(conn, args)
         if cmd == "cancelbooking":
             return cmd_cancelbooking(conn, args, calendar)
         if cmd == "movebooking":
@@ -205,3 +230,88 @@ def handle_command(conn, text, calendar=None):
         log.exception("command failed: %s", text)
         return "That command failed — check the logs."
     return None
+
+
+# --- single-leg links -----------------------------------------------------
+_KIND_LABEL = {DROPOFF: "Drop-off", PICKUP: "Pick-up", MEET_GREET: "Meet & Greet"}
+
+
+def cmd_single(conn, kind, args, calendar=None):
+    """/dropoff, /pickup — one event + one link, for when only one leg needs booking."""
+    label = _KIND_LABEL[kind]
+    if len(args) < 2:
+        return (f"Usage: <code>/{kind} &lt;pet&gt; &lt;date&gt; [owner]</code>\n"
+                f"e.g. <code>/{kind} Willow 2026-09-01 Sarah</code>")
+    pet, day = args[0], parse_date(args[1])
+    owner = " ".join(args[2:]) if len(args) > 2 else None
+    if not day:
+        return f"Couldn't read that date ({args[1]}). Try YYYY-MM-DD."
+
+    thread_key = _thread_key(pet, day, kind)
+    if store.get_scheduling_event(conn, thread_key, 1, kind):
+        return (f"A {label.lower()} for {pet} on {day} already exists — "
+                f"use <code>/bookings</code> to find it.")
+
+    store.upsert_sms_thread(conn, thread_key, owner_name=owner, pet_name=pet,
+                            stay_dates=str(day), status="converted")
+    from .scheduling import create_pending_event
+    ev_id = create_pending_event(conn, thread_key, 1, kind, pet, day,
+                                 source=PRIVATE, calendar=calendar)
+    if not ev_id:
+        return "Could not create the calendar event — check the logs."
+
+    url = build_link(kind, day.isoformat(), owner, ref=ev_id)
+    if not url:
+        return (f"Calendar event created, but the link couldn't be built "
+                "(check CALCOM_USERNAME).")
+    store.update_scheduling_event(conn, ev_id, link_url=url)
+    return (f"🐾 <b>{label} — {pet}</b>\n{day:%a, %b %d}"
+            f"{f' · {owner}' if owner else ''}  <code>#{ev_id}</code>\n\n"
+            f"<code>{url}</code>")
+
+
+def cmd_meetgreet(conn, args, calendar=None):
+    """/meetgreet — open range (next 7 days), so no date and no placeholder yet."""
+    if not args:
+        return ("Usage: <code>/meetgreet &lt;pet&gt; [owner]</code>\n"
+                "Open range — the client picks any time in the next 7 days.")
+    pet = args[0]
+    owner = " ".join(args[1:]) if len(args) > 1 else None
+    from datetime import date as _date
+    thread_key = _thread_key(pet, _date.today(), MEET_GREET)
+    store.upsert_sms_thread(conn, thread_key, owner_name=owner, pet_name=pet,
+                            status="converted")
+    from .scheduling import ensure_meetgreet_link, MEET_GREET as _MG
+    url = ensure_meetgreet_link(conn, thread_key, owner_name=owner, pet_name=pet)
+    row0 = store.get_scheduling_event(conn, thread_key, 1, _MG)
+    if row0:
+        store.update_scheduling_event(conn, row0[0], link_url=url)
+        with store._LOCK, conn:      # tag as private so /bookings marks it 🏠
+            conn.execute("UPDATE scheduling_events SET source=? WHERE id=?",
+                         (PRIVATE, row0[0]))
+    if not url:
+        return "Could not build the meet & greet link (check CALCOM_USERNAME)."
+    row = store.get_scheduling_event(conn, thread_key, 1, MEET_GREET)
+    return (f"🐾 <b>Meet &amp; Greet — {pet}</b>"
+            f"{f' · {owner}' if owner else ''}  <code>#{row[0] if row else '?'}</code>\n"
+            "Open range — no calendar hold until they book.\n\n"
+            f"<code>{url}</code>")
+
+
+def cmd_links(conn, args):
+    """/links <id> — re-show the link(s) for an entry (e.g. to resend)."""
+    if not args:
+        return "Usage: <code>/links &lt;id&gt;</code> (see <code>/bookings</code>)"
+    row = store.get_scheduling_event_by_id(conn, _int(args[0]))
+    if not row:
+        return f"No scheduling event with id {args[0]}."
+    thread_key = row[1]
+    t = store.get_thread(conn, thread_key)
+    pet = (t[1] if t else None) or thread_key
+    out = [f"🔗 <b>Links — {pet}</b>"]
+    for r in store.list_scheduling_events(conn, thread_key=thread_key):
+        ev_id, _tk, _ep, kind, _src, status, target, sched, _g, link = r
+        when = (sched[:16].replace("T", " ") if sched else (target or "open range"))
+        out.append(f"\n<b>{_KIND_LABEL.get(kind, kind)}</b> ({status}, {when})  "
+                   f"<code>#{ev_id}</code>\n<code>{link or '— no link —'}</code>")
+    return "\n".join(out)
