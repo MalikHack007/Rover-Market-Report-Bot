@@ -15,6 +15,7 @@ import logging
 from datetime import datetime, timedelta
 
 from . import config, store
+from .calcom_client import TransientCalcomError
 from .calendar_client import GoogleCalendar, OPAQUE, TRANSPARENT
 from .scheduling import (
     CONFIRMED, DROPOFF, MEET_GREET, PENDING, PICKUP, default_slot, title,
@@ -176,11 +177,15 @@ def process_bookings(conn, bookings, calendar=None) -> int:
 
 
 def poll_once(conn, client=None, calendar=None) -> int:
+    """One reconcile pass. Raises TransientCalcomError if the API was unreachable, so
+    poll_loop can count consecutive failures and alert."""
     from .calcom_client import CalcomClient
 
     client = client or CalcomClient()
     after = (datetime.now() - timedelta(days=1)).isoformat()
     bookings = client.list_bookings(after_iso=after)
+    if bookings is None:            # defensive: older clients returned None
+        raise TransientCalcomError("cal.com bookings unreachable")
     if not bookings:
         return 0
     return process_bookings(conn, bookings, calendar)
@@ -196,12 +201,18 @@ def poll_loop(conn, stop_event=None, interval=None):
         try:
             poll_once(conn)
             failures = 0
+        except TransientCalcomError as e:
+            failures += 1
+            log.warning("cal.com poll failed (%d in a row): %s", failures, e)
+            if failures == config.CALCOM_ALERT_AFTER:
+                _alert(f"Cal.com polling has failed {failures} times in a row — clients' "
+                       "booked times are NOT reaching your calendar.")
         except Exception:
             failures += 1
             log.exception("cal.com poll failed (%d in a row)", failures)
-            if failures == 5:
-                _alert("Cal.com polling has failed 5 times in a row — booked times are "
-                       "not reaching your calendar.")
+            if failures == config.CALCOM_ALERT_AFTER:
+                _alert(f"Cal.com polling has failed {failures} times in a row — clients' "
+                       "booked times are NOT reaching your calendar.")
         time.sleep(interval)
 
 

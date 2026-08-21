@@ -8,6 +8,7 @@ Cal.com's response shape varies across API versions, so `normalize()` is defensi
 pulls the handful of fields we need and tolerates the rest being absent.
 """
 import logging
+import time
 
 import requests
 
@@ -20,6 +21,15 @@ API_BASE = "https://api.cal.com/v2"
 CANCELLED_STATES = {"cancelled", "canceled", "rejected"}
 
 
+class TransientCalcomError(Exception):
+    """The API couldn't be reached (timeout / connection error).
+
+    Deliberately distinct from "no bookings": swallowing these and returning [] made an
+    outage indistinguishable from a quiet day, which silently disabled the poller's
+    consecutive-failure alerting.
+    """
+
+
 class CalcomClient:
     def __init__(self, api_key=None, base=API_BASE):
         self.api_key = api_key or config.CALCOM_API_KEY
@@ -30,30 +40,48 @@ class CalcomClient:
                 "cal-api-version": "2024-08-13"}
 
     def list_bookings(self, after_iso=None, take=100):
-        """Recent bookings. Returns [] on any failure — the next poll retries."""
+        """Recent bookings.
+
+        Returns [] on a hard failure. Raises TransientCalcomError if the network stalled
+        so the caller can count consecutive failures — swallowing those made the poller's
+        "N failures in a row" alert impossible to trigger.
+
+        A brief stall is common on a flaky link, so retry a couple of times before
+        giving up; polling is self-healing anyway (the next poll re-reads current state).
+        """
         if not self.api_key:
             return []
         params = {"take": take, "sortStart": "desc"}
         if after_iso:
             params["afterStart"] = after_iso
-        try:
-            r = requests.get(f"{self.base}/bookings", headers=self._headers(),
-                             params=params, timeout=20)
-        except Exception:
-            log.exception("cal.com bookings request failed")
-            return []
-        if r.status_code != 200:
-            log.error("cal.com bookings failed: %s %s", r.status_code, r.text[:200])
-            return []
-        try:
-            payload = r.json()
-        except Exception:
-            log.exception("cal.com returned unparseable JSON")
-            return []
-        data = payload.get("data", payload)
-        if isinstance(data, dict):
-            data = data.get("bookings", []) or []
-        return [normalize(b) for b in data if isinstance(b, dict)]
+
+        last_error = None
+        for attempt in range(1, config.CALCOM_RETRIES + 1):
+            try:
+                r = requests.get(f"{self.base}/bookings", headers=self._headers(),
+                                 params=params, timeout=(10, 30))
+            except requests.exceptions.RequestException as e:
+                last_error = e
+                log.info("cal.com request stalled (%s), attempt %d/%d",
+                         type(e).__name__, attempt, config.CALCOM_RETRIES)
+                if attempt < config.CALCOM_RETRIES:
+                    time.sleep(2 * attempt)
+                continue
+            if r.status_code != 200:
+                log.error("cal.com bookings failed: %s %s", r.status_code, r.text[:200])
+                return []
+            try:
+                payload = r.json()
+            except Exception:
+                log.exception("cal.com returned unparseable JSON")
+                return []
+            data = payload.get("data", payload)
+            if isinstance(data, dict):
+                data = data.get("bookings", []) or []
+            return [normalize(b) for b in data if isinstance(b, dict)]
+
+        raise TransientCalcomError(f"cal.com unreachable after "
+                                   f"{config.CALCOM_RETRIES} attempts: {last_error}")
 
 
 def _first(d, *keys, default=None):

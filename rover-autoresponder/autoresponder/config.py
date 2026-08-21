@@ -115,6 +115,11 @@ CALCOM_EVENT_PICKUP = os.environ.get("CALCOM_EVENT_PICKUP", "pickup")
 CALCOM_EVENT_MEETGREET = os.environ.get("CALCOM_EVENT_MEETGREET", "meet-greet")
 CALCOM_API_KEY = os.environ.get("CALCOM_API_KEY", "")          # used by the C3 poller
 CALCOM_POLL_SECONDS = int(os.environ.get("CALCOM_POLL_SECONDS", "60"))
+# cal.com occasionally reads slow; retry transient timeouts before calling it an outage.
+CALCOM_TIMEOUT = int(os.environ.get("CALCOM_TIMEOUT", "30"))
+CALCOM_RETRIES = int(os.environ.get("CALCOM_RETRIES", "3"))
+# consecutive failed polls before alerting (5 = ~5 min at the default interval)
+CALCOM_ALERT_AFTER = int(os.environ.get("CALCOM_ALERT_AFTER", "5"))
 
 # The message that carries the scheduling links. Fixed wording (no LLM call needed).
 SCHEDULING_LINKS_TEMPLATE = os.environ.get(

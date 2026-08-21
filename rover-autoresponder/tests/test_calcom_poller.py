@@ -157,3 +157,91 @@ def test_cancel_of_unknown_booking_ignored(tmp_path, monkeypatch):
     ev_id = store.get_scheduling_event(conn, A, 1, DROPOFF)[0]
     assert process_bookings(conn, [_booking(ref=ev_id, status="cancelled")],
                             FakeCalendar()) == 0        # was never confirmed
+
+
+# --- outage detection (regression: alerting used to be dead code) ---
+class _FakeClient:
+    def __init__(self, result): self.result = result
+    def list_bookings(self, **k): return self.result
+
+
+def test_unavailable_raises_not_silently_empty(tmp_path, monkeypatch):
+    """A failed request must be distinguishable from [] (no bookings)."""
+    from autoresponder.calcom_client import TransientCalcomError
+    from autoresponder.calcom_poller import poll_once
+    import pytest
+    conn = _db(tmp_path, monkeypatch)
+    with pytest.raises(TransientCalcomError):
+        poll_once(conn, client=_FakeClient(None), calendar=FakeCalendar())
+
+
+def test_client_raises_after_exhausting_retries(monkeypatch):
+    """The client itself signals an outage rather than returning []."""
+    import pytest
+    import requests as _rq
+    from autoresponder import calcom_client
+    from autoresponder.calcom_client import CalcomClient, TransientCalcomError
+    monkeypatch.setattr(calcom_client.time, "sleep", lambda s: None)
+    monkeypatch.setattr(config, "CALCOM_RETRIES", 2)
+    monkeypatch.setattr(calcom_client.requests, "get",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            _rq.exceptions.ReadTimeout("stalled")))
+    with pytest.raises(TransientCalcomError):
+        CalcomClient(api_key="k").list_bookings()
+
+
+def test_client_retries_then_succeeds(monkeypatch):
+    """A single stall shouldn't count as an outage."""
+    import requests as _rq
+    from autoresponder import calcom_client
+    from autoresponder.calcom_client import CalcomClient
+    monkeypatch.setattr(calcom_client.time, "sleep", lambda s: None)
+    calls = {"n": 0}
+
+    class _R:
+        status_code = 200
+        def json(self): return {"data": []}
+
+    def flaky(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise _rq.exceptions.ReadTimeout("stalled")
+        return _R()
+    monkeypatch.setattr(calcom_client.requests, "get", flaky)
+    assert CalcomClient(api_key="k").list_bookings() == []
+    assert calls["n"] == 2
+
+
+def test_no_bookings_is_not_an_error(tmp_path, monkeypatch):
+    from autoresponder.calcom_poller import poll_once
+    conn = _db(tmp_path, monkeypatch)
+    assert poll_once(conn, client=_FakeClient([]), calendar=FakeCalendar()) == 0
+
+
+def test_repeated_outage_alerts(tmp_path, monkeypatch):
+    """A sustained outage must reach Telegram — booked times silently not arriving
+    is exactly the failure this system must never have."""
+    import threading
+    from autoresponder import calcom_poller
+    conn = _db(tmp_path, monkeypatch)
+    alerts = []
+    monkeypatch.setattr(calcom_poller, "_alert", lambda t: alerts.append(t))
+    monkeypatch.setattr(config, "CALCOM_ALERT_AFTER", 3)
+    monkeypatch.setattr(config, "CALCOM_POLL_SECONDS", 0)
+    from autoresponder.calcom_client import TransientCalcomError
+    monkeypatch.setattr(calcom_poller, "poll_once",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            TransientCalcomError("down")))
+    stop = threading.Event()
+    calls = {"n": 0}
+    real_sleep = calcom_poller.time.sleep if hasattr(calcom_poller, "time") else None
+
+    def fake_sleep(_):
+        calls["n"] += 1
+        if calls["n"] >= 4:
+            stop.set()
+    import time as _t
+    monkeypatch.setattr(_t, "sleep", fake_sleep)
+    calcom_poller.poll_loop(conn, stop_event=stop, interval=0)
+    assert alerts and "NOT reaching your calendar" in alerts[0]
+    assert len(alerts) == 1          # alerts once, doesn't spam every poll
