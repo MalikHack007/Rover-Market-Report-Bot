@@ -39,6 +39,11 @@ CONFIRMED_RE = re.compile(
 )
 MODIFIED_RE = re.compile(
     r"Your upcoming booking with\s+(.+?)\s+has been modified", re.IGNORECASE)
+# Pay-first flow: the client has paid and is waiting on YOU to accept. No reply is
+# wanted here — it's an action item. Accepting produces only a confirmation EMAIL
+# (no confirmation SMS), which confirmation_email.py handles.
+AWAITING_ACCEPT_RE = re.compile(
+    r"(.+?)\s+wants you to care for\s+(.+?)\s+on Rover", re.IGNORECASE)
 
 # Truncation tail: "... He... (more at https://r.rover.com/NWPXeH )"
 TRUNCATED_RE = re.compile(r"\(\s*more at\s+https?://\S+\s*\)", re.IGNORECASE)
@@ -84,6 +89,13 @@ def parse_sms(sender: str, body: str) -> SmsMessage:
     # Markers arrive wrapped in [ ... ]; strip the brackets so leading "[" doesn't
     # get captured into owner names (e.g. "[ Brenna D." -> "Brenna D.").
     scan = re.sub(r"[\[\]]", " ", text).strip()
+
+    m = AWAITING_ACCEPT_RE.search(scan)
+    if m:
+        msg.kind = "awaiting_accept"
+        msg.owner_name = m.group(1).strip()
+        msg.pet_name = _pet_name(m.group(2))
+        return msg
 
     m = MODIFIED_RE.search(scan)
     if m:

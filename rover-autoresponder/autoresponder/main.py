@@ -49,6 +49,16 @@ def dispatch(conn, pm, schedule_draft) -> None:
     inquiry  -> schedule a (debounced) draft for the thread.
     else     -> confirmed booking / unfamiliar subject: mark converted, no action.
     """
+    # Pay-first bookings confirm ONLY by email (no confirmation SMS), so this runs even
+    # in fallback mode — otherwise those bookings never reach the calendar.
+    if config.GOOGLE_CALENDAR_ID:
+        try:
+            from .confirmation_email import handle_confirmation_email
+            if handle_confirmation_email(conn, pm.raw_subject, pm.message_text):
+                return
+        except Exception:
+            log.exception("confirmation-email handling failed")
+
     if pm.kind == "inquiry":
         log.info(
             "NEW INQUIRY | thread=%s owner=%s start=%s | msg=%r",

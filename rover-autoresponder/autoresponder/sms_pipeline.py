@@ -68,6 +68,25 @@ def handle_sms(conn, sender: str, body: str, schedule_draft=None):
                         sender)
         return msg
 
+    elif msg.kind == "awaiting_accept":
+        # The client paid and is waiting on you to accept in the Rover app. Don't draft
+        # a reply — surface it as an action item. Accepting yields only a confirmation
+        # EMAIL (no SMS), which confirmation_email.py picks up.
+        store.upsert_sms_thread(conn, sender, owner_name=msg.owner_name,
+                                pet_name=msg.pet_name)
+        store.record_sms(conn, sender, msg)
+        log.info("AWAITING YOUR ACCEPTANCE (sms) | %s | owner=%s pet=%s",
+                 sender, msg.owner_name, msg.pet_name)
+        try:
+            from . import telegram_notify
+            telegram_notify.send_alert(
+                f"💳 {msg.owner_name or 'A client'} paid and is waiting for you to "
+                f"ACCEPT {msg.pet_name or 'their booking'} in the Rover app. "
+                "The calendar will update once the confirmation email arrives.")
+        except Exception:
+            log.exception("alert failed")
+        return msg
+
     elif msg.kind in ("confirmed", "modified"):
         store.upsert_sms_thread(conn, sender, owner_name=msg.owner_name,
                                 pet_name=msg.pet_name, status="converted")
