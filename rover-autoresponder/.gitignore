@@ -14,3 +14,8 @@ autoresponder/faq.mdtoken.json*
 credentials.json*
 *.json.old
 certs/
+token.json*
+credentials.json*
+pubsub-sa.json
+*.bak
+certs/

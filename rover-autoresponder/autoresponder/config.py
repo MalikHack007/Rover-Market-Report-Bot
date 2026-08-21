@@ -17,7 +17,15 @@ PUBSUB_SUBSCRIPTION = os.environ.get("PUBSUB_SUBSCRIPTION", "rover-gmail-sub")
 # --- Gmail (dedicated Rover-messages account) ---
 GMAIL_CREDENTIALS_PATH = os.environ.get("GMAIL_CREDENTIALS_PATH", "./credentials.json")
 GMAIL_TOKEN_PATH = os.environ.get("GMAIL_TOKEN_PATH", "./token.json")
-GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+# Addendum B: one token now covers Gmail (read) AND Calendar (write). Adding a scope
+# invalidates the existing token, so token.json must be re-minted after this change.
+# NOTE: the token acts as whichever account GRANTS consent — the Rover calendar must be
+# created under that same account, not under whoever owns the Cloud project.
+GOOGLE_SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/calendar.events",
+]
+GMAIL_SCOPES = GOOGLE_SCOPES        # backward-compatible alias
 WATCH_LABEL_IDS = ["INBOX"]
 
 # --- Local state ---
@@ -85,3 +93,10 @@ EMAIL_MODE = os.environ.get("EMAIL_MODE", "fallback")
 
 def email_fallback_only() -> bool:
     return EMAIL_MODE.strip().lower() != "standalone"
+
+
+# --- Addendum B: calendar ---
+# The dedicated "Rover" calendar, created under the SAME account that grants OAuth
+# consent (the Rover-messages account) — the token can only see that account's calendars.
+GOOGLE_CALENDAR_ID = os.environ.get("GOOGLE_CALENDAR_ID", "")
+CALENDAR_TIMEZONE = os.environ.get("CALENDAR_TIMEZONE", "America/Chicago")
