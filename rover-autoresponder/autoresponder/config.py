@@ -105,3 +105,26 @@ CALENDAR_TIMEZONE = os.environ.get("CALENDAR_TIMEZONE", "America/Chicago")
 DEFAULT_DROPOFF_TIME = os.environ.get("DEFAULT_DROPOFF_TIME", "09:00")
 DEFAULT_PICKUP_TIME = os.environ.get("DEFAULT_PICKUP_TIME", "17:00")
 SLOT_MINUTES = int(os.environ.get("SLOT_MINUTES", "30"))
+
+
+# --- Addendum B / C2: Cal.com scheduling links ---
+CALCOM_USERNAME = os.environ.get("CALCOM_USERNAME", "")
+CALCOM_BASE_URL = os.environ.get("CALCOM_BASE_URL", "https://cal.com")
+CALCOM_EVENT_DROPOFF = os.environ.get("CALCOM_EVENT_DROPOFF", "dropoff")
+CALCOM_EVENT_PICKUP = os.environ.get("CALCOM_EVENT_PICKUP", "pickup")
+CALCOM_EVENT_MEETGREET = os.environ.get("CALCOM_EVENT_MEETGREET", "meet-greet")
+CALCOM_API_KEY = os.environ.get("CALCOM_API_KEY", "")          # used by the C3 poller
+
+# The message that carries the scheduling links. Fixed wording (no LLM call needed).
+SCHEDULING_LINKS_TEMPLATE = os.environ.get(
+    "SCHEDULING_LINKS_TEMPLATE",
+    "Hey {owner_name}, just accepted — so excited to have {pet_name}! "
+    "Please pick your times here:\n\n"
+    "Drop-off ({start_date}): {dropoff_link}\n\n"
+    "Pick-up ({end_date}): {pickup_link}\n\n"
+    "Let me know if none of the times work and we'll sort something out!",
+)
+MEETGREET_LINK_TEMPLATE = os.environ.get(
+    "MEETGREET_LINK_TEMPLATE",
+    "Happy to do a meet and greet! Pick a time that works for you here: {meetgreet_link}",
+)

@@ -65,6 +65,8 @@ def handle_sms(conn, sender: str, body: str, schedule_draft=None):
                     pet = msg.pet_name or (row[1] if row else None)
                     on_booking_confirmed(conn, sender, pet,
                                          msg.start_date, msg.end_date)
+                    # C2: draft the message carrying the scheduling links.
+                    send_scheduling_links(conn, sender)
                 except Exception:
                     log.exception("  calendar placement failed for %s", sender)
         log.info("%s (sms) | %s | owner=%s -> converted, no action",
@@ -244,3 +246,38 @@ def draft_for_thread(conn, number: str) -> None:
                                           needs_review=d.off_playbook),
         reply_markup=telegram_notify.build_sms_keyboard(number))
     store.link_card(conn, mid, number)
+
+
+# --- Addendum B / C2: deliver the scheduling links for approval ----------
+def send_scheduling_links(conn, number: str) -> bool:
+    """Compose the scheduling-links message and push it to Telegram for approval.
+
+    Fixed template, so no LLM call. It goes through the normal approve-and-send flow —
+    you review it, can edit it, and only then does it reach the client.
+
+    Note the thread is 'converted' by this point (screening is over); this is the one
+    message we still want to send on a converted thread, so it bypasses the drafter
+    rather than going through draft_for_thread().
+    """
+    from . import telegram_notify
+    from .scheduling import build_scheduling_draft
+
+    text, links = build_scheduling_draft(conn, number)
+    if not text:
+        log.warning("  no scheduling links for %s — skipping link message", number)
+        return False
+
+    row = store.get_thread(conn, number)
+    owner, pet, dates = (row[0], row[1], row[2]) if row else (None, None, None)
+    store.set_pending_text(conn, number, text)
+    store.set_last_draft(conn, number, text)
+    history = store.get_conversation(conn, number)
+    log.info("  SCHEDULING LINKS drafted for %s\n----- draft -----\n%s\n-----------------",
+             number, text)
+    mid = telegram_notify.send_message(
+        telegram_notify.format_draft_card(
+            owner, dates, "SCHEDULING", ["booking confirmed — send the booking links"],
+            history, text),
+        reply_markup=telegram_notify.build_sms_keyboard(number))
+    store.link_card(conn, mid, number)
+    return True

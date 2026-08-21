@@ -132,3 +132,117 @@ def on_booking_confirmed(conn, thread_key, pet_name, start_text, end_text,
         log.info("placed %d PENDING event(s) for %s (%s) %s -> %s",
                  len(created), thread_key, pet_name, start_day, end_day)
     return created
+
+
+# --- Addendum B / C2: scheduling links -----------------------------------
+def _slug(kind):
+    return {DROPOFF: config.CALCOM_EVENT_DROPOFF,
+            PICKUP: config.CALCOM_EVENT_PICKUP,
+            MEET_GREET: config.CALCOM_EVENT_MEETGREET}.get(kind, kind)
+
+
+def build_link(kind, target_date=None, owner_name=None, ref=None):
+    """Build a Cal.com booking link.
+
+    Params carried:
+      date/month  — pre-selects the booking's day (drop-off/pick-up are date-locked;
+                    meet-and-greet is an open range so it gets no date).
+      name        — prefills the attendee, which also helps C3 match the booking back.
+      ref         — our scheduling_events.id. Cal.com may or may not echo custom params
+                    back through its API, so C3 treats this as a bonus and falls back to
+                    matching on (event type + date + attendee).
+    """
+    from urllib.parse import urlencode
+
+    if not config.CALCOM_USERNAME:
+        log.warning("CALCOM_USERNAME not set — cannot build a scheduling link")
+        return None
+    base = f"{config.CALCOM_BASE_URL.rstrip('/')}/{config.CALCOM_USERNAME}/{_slug(kind)}"
+    params = {}
+    if target_date and kind != MEET_GREET:
+        params["date"] = target_date
+        params["month"] = target_date[:7]
+    if owner_name:
+        params["name"] = owner_name
+    if ref:
+        params["metadata[ref]"] = str(ref)
+    return f"{base}?{urlencode(params)}" if params else base
+
+
+def ensure_links(conn, thread_key, episode, owner_name=None):
+    """Generate and persist links for this booking's events. Returns {kind: url}."""
+    links = {}
+    for kind in (DROPOFF, PICKUP):
+        row = store.get_scheduling_event(conn, thread_key, episode, kind)
+        if not row:
+            continue
+        ev_id, _status, target_date, _sched, _gcal, existing = row
+        url = existing or build_link(kind, target_date, owner_name, ref=ev_id)
+        if url and not existing:
+            store.update_scheduling_event(conn, ev_id, link_url=url)
+        if url:
+            links[kind] = url
+    return links
+
+
+def scheduling_message(owner_name, pet_name, links, start_date=None, end_date=None):
+    """The fixed message that carries both links (no LLM call — wording is predictable)."""
+    if DROPOFF not in links or PICKUP not in links:
+        return None
+    return config.SCHEDULING_LINKS_TEMPLATE.format(
+        owner_name=owner_name or "there",
+        pet_name=pet_name or "your pup",
+        start_date=_pretty(start_date),
+        end_date=_pretty(end_date),
+        dropoff_link=links[DROPOFF],
+        pickup_link=links[PICKUP],
+    )
+
+
+def _pretty(iso_date):
+    """'2026-09-01' -> 'Tue, Sep 1'."""
+    if not iso_date:
+        return ""
+    try:
+        return datetime.strptime(iso_date, "%Y-%m-%d").strftime("%a, %b %-d")
+    except (ValueError, TypeError):
+        return iso_date
+
+
+def build_scheduling_draft(conn, thread_key, calendar=None):
+    """After confirmation: ensure links exist and compose the message to send.
+
+    Returns (text, links) or (None, {}) if links couldn't be built.
+    """
+    episode = store.get_episode(conn, thread_key)
+    row = store.get_thread(conn, thread_key)
+    owner, pet = (row[0], row[1]) if row else (None, None)
+    links = ensure_links(conn, thread_key, episode, owner_name=owner)
+    if not links:
+        return None, {}
+    d_row = store.get_scheduling_event(conn, thread_key, episode, DROPOFF)
+    p_row = store.get_scheduling_event(conn, thread_key, episode, PICKUP)
+    text = scheduling_message(owner, pet, links,
+                              d_row[2] if d_row else None,
+                              p_row[2] if p_row else None)
+    return text, links
+
+
+def ensure_meetgreet_link(conn, thread_key, owner_name=None, pet_name=None,
+                          calendar=None):
+    """Meet-and-greet: an OPEN range (next 7 days), not date-locked.
+
+    Creates a PENDING placeholder only once the client actually books (there's no known
+    date to place beforehand), so here we just mint and persist the link.
+    """
+    episode = store.get_episode(conn, thread_key)
+    row = store.get_scheduling_event(conn, thread_key, episode, MEET_GREET)
+    if row and row[5]:
+        return row[5]                                  # already have a link
+    ev_id = row[0] if row else store.add_scheduling_event(
+        conn, thread_key=thread_key, episode=episode, kind=MEET_GREET,
+        status=PENDING, target_date=None)
+    url = build_link(MEET_GREET, owner_name=owner_name, ref=ev_id)
+    if url:
+        store.update_scheduling_event(conn, ev_id, link_url=url)
+    return url
