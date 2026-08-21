@@ -485,7 +485,7 @@ def promote_recent_to_episode(conn: sqlite3.Connection, number: str, episode: in
         after_id = row[0] if row and row[0] else 0
         cur = conn.execute(
             "UPDATE messages SET episode=? WHERE thread_key=? AND episode<? "
-            "AND id > ? "
+            "AND id > ? AND direction='inbound' "
             f"AND received_at > datetime('now', '-{int(window_minutes)} minutes')",
             (episode, number, episode, after_id))
         return cur.rowcount

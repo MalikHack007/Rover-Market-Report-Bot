@@ -96,17 +96,35 @@ BLOCK = ("Boarding Request - One Time: Drop-off: Fri, Aug 21 at 1:00 PM - 1:30 P
          "Pick-up: Sun, Aug 23 at 2:00 PM - 3:30 PM")
 
 
-def test_booking_block_before_marker_opens_pending_then_active(tmp_path):
-    """Real ordering: the structured block arrives BEFORE the inquiry marker."""
+def test_booking_block_alone_opens_the_inquiry(tmp_path):
+    """The block IS the new-request signal — don't wait for a marker that may never come."""
     conn = _db(tmp_path)
     scheduled = []
     handle_sms(conn, A, BLOCK, schedule_draft=scheduled.append)
-    assert store.get_thread(conn, A)[4] == "pending"   # held, not stranded as unknown
-    assert scheduled == []                              # nothing drafted yet
-    handle_sms(conn, A, ANIKA_INQ, schedule_draft=scheduled.append)
-    assert store.get_thread(conn, A)[4] == "active"     # marker promotes it
-    handle_sms(conn, A, "Will you be available?", schedule_draft=scheduled.append)
-    assert scheduled == [A]                             # now drafting
+    assert store.get_thread(conn, A)[4] == "active"     # open immediately
+    assert scheduled == [A]                              # and drafting is scheduled
+
+
+def test_marker_after_block_enriches_details(tmp_path):
+    """The marker still fills in owner/pet/dates when it does arrive."""
+    conn = _db(tmp_path)
+    handle_sms(conn, A, BLOCK)
+    handle_sms(conn, A, ANIKA_INQ)
+    owner, pet, dates, stage, status = store.get_thread(conn, A)
+    assert status == "active"
+    assert owner == "Anika" and pet == "Teddy"
+    assert dates == "08/21/2026 to 08/23/2026"
+
+
+def test_custom_message_inquiry_without_marker_still_drafts(tmp_path):
+    """Real case (+18589255548): client writes their own message, no marker ever comes."""
+    conn = _db(tmp_path)
+    scheduled = []
+    handle_sms(conn, A, BLOCK, schedule_draft=scheduled.append)
+    handle_sms(conn, A, "Hi! We're headed out of town and need boarding for our pup.",
+               schedule_draft=scheduled.append)
+    assert store.get_thread(conn, A)[4] == "active"
+    assert scheduled == [A, A]                           # not stranded
 
 
 # --- returning clients: Rover reuses a number per CLIENT across bookings ---
@@ -173,3 +191,24 @@ def test_first_ever_inquiry_is_episode_one(tmp_path):
     conn = _db(tmp_path)
     handle_sms(conn, A, ANIKA_INQ)
     assert store.get_episode(conn, A) == 1
+
+
+def test_block_then_marker_stays_on_one_episode(tmp_path):
+    """Real Rover ordering: the block opens the thread, the marker must not bump it."""
+    conn = _db(tmp_path)
+    handle_sms(conn, A, BLOCK)
+    assert store.get_episode(conn, A) == 1
+    handle_sms(conn, A, ANIKA_INQ)
+    assert store.get_episode(conn, A) == 1          # NOT 2
+    # and the block's context is still in this episode
+    assert any("Boarding Request" in t for _, t in store.get_conversation(conn, A))
+
+
+def test_marker_after_a_real_exchange_starts_a_new_episode(tmp_path):
+    """Once we've replied, the episode is in use — a new marker means a new booking."""
+    conn = _db(tmp_path)
+    handle_sms(conn, A, ANIKA_INQ)
+    store.record_outbound(conn, A, "Hey Anika!")
+    handle_sms(conn, A, BRENNA_CONF)
+    handle_sms(conn, A, INQ2)
+    assert store.get_episode(conn, A) == 2

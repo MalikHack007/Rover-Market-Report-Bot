@@ -31,19 +31,36 @@ def handle_sms(conn, sender: str, body: str, schedule_draft=None):
         # thread we've seen before means the SAME client is booking AGAIN. Start a new
         # episode: reactivate (even from 'converted'), reset the stage, and scope the
         # drafter's context to this request only — not a conversation from a year ago.
-        episode = store.start_new_episode(conn, sender, owner_name=msg.owner_name,
-                                          pet_name=msg.pet_name, stay_dates=_dates(msg))
+        #
+        # EXCEPTION: the booking block usually arrives seconds BEFORE the marker and has
+        # already opened this episode. Bumping again would burn an episode and strand the
+        # block's context. Only start a new episode if the current one is actually in use
+        # (we've replied) or has gone terminal.
+        status = _status(conn, sender)
+        fresh = (known and status in ("active", "pending")
+                 and not store.episode_has_outbound(conn, sender))
+        if fresh:
+            episode = store.get_episode(conn, sender)
+            store.upsert_sms_thread(conn, sender, owner_name=msg.owner_name,
+                                    pet_name=msg.pet_name, stay_dates=_dates(msg),
+                                    status="active")
+            log.info("NEW INQUIRY (sms) | %s | owner=%s pet=%s %s | service=%s",
+                     sender, msg.owner_name, msg.pet_name, _dates(msg), msg.service)
+        else:
+            episode = store.start_new_episode(
+                conn, sender, owner_name=msg.owner_name, pet_name=msg.pet_name,
+                stay_dates=_dates(msg))
+            if known:
+                log.info("RETURNING CLIENT (sms) | %s | new inquiry, episode %d | "
+                         "owner=%s pet=%s %s", sender, episode, msg.owner_name,
+                         msg.pet_name, _dates(msg))
+            else:
+                log.info("NEW INQUIRY (sms) | %s | owner=%s pet=%s %s | service=%s",
+                         sender, msg.owner_name, msg.pet_name, _dates(msg), msg.service)
         store.record_sms(conn, sender, msg)
         # The structured booking block usually lands seconds BEFORE the marker; pull it
         # into this episode so its drop-off/pick-up details aren't stranded.
         moved = store.promote_recent_to_episode(conn, sender, episode)
-        if known:
-            log.info("RETURNING CLIENT (sms) | %s | new inquiry, episode %d | "
-                     "owner=%s pet=%s %s", sender, episode, msg.owner_name,
-                     msg.pet_name, _dates(msg))
-        else:
-            log.info("NEW INQUIRY (sms) | %s | owner=%s pet=%s %s | service=%s",
-                     sender, msg.owner_name, msg.pet_name, _dates(msg), msg.service)
         if moved:
             log.info("  pulled %d recent message(s) into episode %d", moved, episode)
         if msg.truncated:

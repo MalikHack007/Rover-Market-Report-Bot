@@ -149,6 +149,7 @@ def test_returning_client_new_episode_gets_own_events(tmp_path):
     conn = _db(tmp_path)
     cal = FakeCalendar()
     handle_sms(conn, A, INQ)
+    store.record_outbound(conn, A, "Hey Jessica!")   # the episode is genuinely in use
     on_booking_confirmed(conn, A, "Archie", "09/01", "09/06", calendar=cal,
                          today=date(2026, 8, 20))
     # a year later the same number sends a new request -> episode 2
