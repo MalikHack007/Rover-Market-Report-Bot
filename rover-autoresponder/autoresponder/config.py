@@ -114,6 +114,7 @@ CALCOM_EVENT_DROPOFF = os.environ.get("CALCOM_EVENT_DROPOFF", "dropoff")
 CALCOM_EVENT_PICKUP = os.environ.get("CALCOM_EVENT_PICKUP", "pickup")
 CALCOM_EVENT_MEETGREET = os.environ.get("CALCOM_EVENT_MEETGREET", "meet-greet")
 CALCOM_API_KEY = os.environ.get("CALCOM_API_KEY", "")          # used by the C3 poller
+CALCOM_POLL_SECONDS = int(os.environ.get("CALCOM_POLL_SECONDS", "60"))
 
 # The message that carries the scheduling links. Fixed wording (no LLM call needed).
 SCHEDULING_LINKS_TEMPLATE = os.environ.get(

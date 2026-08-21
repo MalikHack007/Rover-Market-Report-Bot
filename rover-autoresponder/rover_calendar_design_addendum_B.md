@@ -1,9 +1,28 @@
 # Design Addendum B — Calendar & scheduling integration
 
-**Status:** Draft v0.3 (design review — no code yet)
+**Status:** v0.6 (C1–C3 built; C4–C6 pending)
 **Extends:** `rover_autoresponder_design.md` (v0.3) + Addendum A (SMS transport)
 **Owner:** Malik
 **Last updated:** 2026-08-20
+
+**Changelog v0.5 → v0.6:** **Decision 4 reversed on evidence.** A real test booking showed
+Cal.com's API exposes **no Google Calendar event id** (no `references` field; API v1, which
+carried it, is decommissioned — returns 410). The bot therefore cannot relabel Cal.com's
+event, so **the bot owns its own event end-to-end** and Cal.com's writes are redirected to a
+throwaway calendar (§5.1). The same test confirmed Cal.com **does** echo our
+`metadata[ref]` back, so C3 matching is exact (§5.2). Also: event-type **locations** must be
+set to In Person — the default is Cal Video (§13).
+
+**Changelog v0.4 → v0.5:** Simplified private bookings (§8). They arrive on a **different
+phone line the bot never sees**, so there is no SMS thread, no drafting, and no
+approve-and-send involved — which removes the accidental-re-screening risk entirely and
+drops the `source` exclusion machinery. The bot's only job is: record the booking, place
+the calendar events, and hand you links to send yourself.
+
+**Changelog v0.3 → v0.4:** Booking updates now come from **polling Cal.com**, not webhooks —
+Cal.com's cloud can't reach a LAN box behind home NAT, and polling avoids exposing a public
+endpoint (§4.1). Added **private (non-Rover) bookings** (§8): manually created from Telegram,
+same calendar + link flow, but explicitly excluded from the screening playbook.
 
 **Changelog v0.2 → v0.3:** Corrected a wrong assumption — **modification emails arrive as
 a SEPARATE email thread**, not inside the conversation thread, so the phone↔thread binding
@@ -44,8 +63,9 @@ hide.
 |---|---|---|
 | Booking confirmed | SMS marker: `[ Jessica K. has confirmed a booking request (stay) with Archie from 09/01 to 09/06 … ]` | Drop-off + Pick-up PENDING events, drop-off/pick-up links |
 | Meet-and-greet requested | Client asks during screening (S3) | M&G PENDING event (tentative date) + M&G link |
-| Client books a slot | Scheduling tool webhook | PENDING → CONFIRMED, event moved to chosen time |
-| Client reschedules/cancels a slot | Scheduling tool webhook | Event moved, or reverted to PENDING |
+| Client books a slot | **Cal.com poll** (§4.1) | PENDING → CONFIRMED, event moved to chosen time |
+| Client reschedules/cancels a slot | **Cal.com poll** | Event moved, or reverted to PENDING |
+| **Private booking entered** | You, via Telegram command (§8) — private clients use a different phone line the bot never sees | Drop-off + Pick-up PENDING events + links for you to send |
 | **Booking modified** | **Email only**: `Your revised itinerary … Dates: Aug 5, 2026 - Aug 10, 2026` | Move events to new dates; re-issue links |
 | Booking cancelled | SMS: `[ Rover Update: Your booking from 08/15/2026 to 08/18/2026 with Joshua K. has been cancelled … ]` | Delete events, expire links |
 | Booking confirmed (email) | Subject `Confirmed: Mazzy's upcoming booking from Aug 20, 2026 - Aug 23, 2026`; body has **Owner, Phone number, Dates** | Binds phone ↔ email thread; supplies authoritative dates |
@@ -85,12 +105,15 @@ the email confirms; if the email lands first we already have authoritative dates
                        │ builds link                       │ move + retitle
                        ▼                                   │ (CONFIRMED)
               ┌──────────────────┐                ┌────────┴─────────┐
-              │ Draft + approve  │                │ Booking webhook  │
-              │ (existing S4)    │                │ receiver         │
+              │ Draft + approve  │                │ Cal.com POLLER   │
+              │ (existing S4)    │                │ (every ~60s)     │
               └────────┬─────────┘                └────────▲─────────┘
-                       │ approved SMS                      │ client booked
+                       │ approved SMS                      │ pulls bookings
                        ▼                                   │
-                    CLIENT ──── opens link ───▶ Scheduling page (public)
+                    CLIENT ──── opens link ───▶ Cal.com (hosted)
+
+   Private bookings (§8): you → /booking command → Orchestrator → calendar + links
+     (separate phone line; bot never messages these clients — you send the links)
                                                            │
    Availability sources ──────────────────────────────────┘
      • recurring rules (your blocked windows)
@@ -99,8 +122,8 @@ the email confirms; if the email lands first we already have authoritative dates
 ```
 
 The orchestrator is new. Everything else reuses the existing pipeline: links ride out
-inside a normal approve-and-send draft, and the booking webhook lands on the same HTTPS
-receiver pattern already built for SMS.
+inside a normal approve-and-send draft, and the Cal.com poller runs as a background thread
+alongside the existing debouncer and Telegram poller.
 
 ---
 
@@ -111,14 +134,14 @@ real constraint, not a detail.
 
 ### Option A — Cal.com (hosted), one event type per purpose *(recommended)*
 Three event types: `dropoff`, `pickup`, `meet-greet`. Links carry the date as a
-parameter (`?date=2026-09-01`), and the webhook validates that the client booked on the
+parameter (`?date=2026-09-01`), and the poller validates that the client booked on the
 right day.
 
 - **Pros:** no public hosting to run, availability rules + conflict detection built in,
   free tier covers it, reschedule/cancel handled for you.
 - **Cons:** the date parameter *pre-selects* rather than *enforces* — a determined client
-  could navigate to another day. Mitigation: webhook validation flags a mismatch and
-  alerts you rather than silently accepting.
+  could navigate to another day. Mitigation: the poller flags a date mismatch and alerts
+  you rather than silently accepting it.
 
 ### Option B — Cal.com, one event type created per booking via API
 Each booking gets its own event type locked to a single date, deleted afterwards.
@@ -134,8 +157,37 @@ Serve our own page from the VM through a tunnel (e.g. Cloudflare Tunnel) for a p
 - **Cons:** we build slot generation, conflict checking, reschedule/cancel, and a public
   attack surface — plus tunnel uptime becomes another dependency.
 
-**Recommendation: A.** Start with the lowest build cost and a webhook safety net; move to
-B or C only if clients actually book wrong days in practice.
+**Recommendation: A.** Start with the lowest build cost and a validation safety net; move
+to B or C only if clients actually book wrong days in practice.
+
+---
+
+### 4.1 Updates by polling, not webhooks
+
+Cal.com fires webhooks from its cloud to a public URL. Our receiver sits on a **LAN IP
+behind home NAT with a self-signed cert**, so Cal.com cannot reach it. Rather than expose
+a public endpoint (Cloudflare Tunnel or similar), the orchestrator **polls Cal.com's
+bookings API** on a short interval.
+
+- **Interval:** ~60s. Latency from "client books" to "event flips to CONFIRMED" is at most
+  a minute, which is irrelevant here — nobody is watching the calendar in real time.
+- **No public attack surface**, no tunnel to keep alive; consistent with the
+  brain-stays-on-the-LAN posture of the rest of the system.
+- **It doubles as the reconcile job** (§9): because each poll compares Cal.com's state
+  against ours, drift is corrected as a side effect rather than needing a separate task.
+- **Idempotent:** each poll processes bookings by Cal.com booking id; an already-handled
+  booking is a no-op, so a repeated poll cannot double-apply anything.
+- Detects all three transitions in one place: new bookings, reschedules, and cancellations.
+
+**Matching a Cal.com booking back to our event:** each generated link carries a **reference
+token** (a Cal.com metadata/prefill parameter holding our `scheduling_events.id`). The
+poller reads it straight off the booking, so matching is exact rather than inferred from
+name/date coincidence. Works identically for Rover and private bookings. If a booking
+somehow arrives without the token (client booked from a bare link), fall back to matching
+on date + event type and alert if ambiguous.
+
+If real-time ever matters, a tunnel + webhook can be added later without changing anything
+downstream — the handler is the same.
 
 ---
 
@@ -161,28 +213,66 @@ B or C only if clients actually book wrong days in practice.
 Titles encode state so your calendar is readable at a glance:
 `{Pet} {Type} (PENDING|CONFIRMED)` — e.g. `Archie Drop-off (CONFIRMED)`.
 
-### 5.1 The PENDING → CONFIRMED handoff (from decision 4)
+### 5.1 Who owns the calendar event (revised — decision 4 reversed)
 
-You chose "the tool owns the event, the bot relabels." That's clean *after* a booking, but
-before the client picks a time **the tool has no event** — so the bot must own the
-placeholder, and there's a moment where two events exist:
+The original decision was "the tool owns the confirmed event, the bot relabels it." A real
+test booking showed that isn't implementable:
 
 ```
-  1. Booking confirmed        → BOT creates "Archie Drop-off (PENDING)"
-                                 (30-min block, transparent, Rover calendar)
-  2. Client picks 3:00 PM     → CAL.COM creates its own event at 3:00 PM
-  3. Webhook fires            → BOT deletes its placeholder
-                              → BOT retitles Cal.com's event to
-                                "Archie Drop-off (CONFIRMED)"
+Cal.com booking payload (API v2), most recent booking:
+  keys: id, uid, icsUid, status, start, end, eventTypeId, eventType,
+        metadata, attendees, hosts, location, ...
+  references field: ABSENT
+  API v1 (which historically carried references): 410 Decommissioned
 ```
 
-Requirements this imposes:
-- Cal.com's Google Calendar write target must be the **Rover calendar**, or the confirmed
-  event lands somewhere else and your calendar splits across two places.
-- The delete-then-retitle must be **atomic in effect**: if the retitle fails after the
-  delete, you'd be left with an unlabelled Cal.com event. Retry, and alert on failure.
-- If the webhook never arrives (tool outage), you'd have a PENDING placeholder *and* a
-  real Cal.com event. A periodic reconcile (§9) catches this.
+`uid` and `icsUid` are **Cal.com's own** identifiers, not Google's. With no Google event
+id, the bot has no way to find, retitle, or delete the event Cal.com creates.
+
+**Revised design: the bot owns its event for the whole lifecycle.**
+
+```
+  1. Booking confirmed     → BOT creates "Archie Drop-off (PENDING)"
+                              transparent 30-min block on ROVER; stores gcal_event_id
+  2. Client books 10:00    → CAL.COM creates its own event (unavoidable side effect)
+  3. Poller sees it (≤60s) → BOT patches ITS OWN event: move to 10:00, retitle
+                              "(CONFIRMED)", flip to opaque
+```
+
+Cal.com's event is **ignored entirely** — never matched, never touched. To stop it
+cluttering your calendar, redirect it:
+
+- **Destination calendar (writes):** a hidden throwaway calendar (e.g. `Cal.com Raw`), NOT
+  ROVER. Otherwise every confirmed drop-off appears twice.
+- **Conflict checking (reads):** keep **ROVER checked** — this is what makes the bot's
+  opaque CONFIRMED events block the slot for other clients. Check the throwaway too: it
+  closes the ≤60s window between a client booking and the poller marking ROVER opaque,
+  during which a second client could otherwise grab the same slot.
+
+Why the bot can't simply cede ownership: before the client books, **Cal.com has no event
+at all**. The PENDING placeholder — the thing that puts an unscheduled booking on your
+calendar — can only come from the bot.
+
+### 5.2 How a booking is matched back to an event
+
+The bot never inspects Cal.com's *calendar event*. Correlation happens through the **API**,
+one level up:
+
+```
+Cal.com booking (API) ──metadata[ref]──▶ scheduling_events row ──gcal_event_id──▶ ROVER event
+```
+
+1. On creating the placeholder, the bot stores the Google event id it received
+   (`gcal_event_id`) — so it always knows which event is its own.
+2. The generated link embeds `metadata[ref]=<scheduling_events.id>`.
+3. The poller reads the booking and finds `metadata: {"ref": "..."}` — **verified present**
+   in the live API response.
+4. It looks up that row and patches the event id recorded in step 1.
+
+No calendar search is ever performed, which is why the missing `references` field costs us
+nothing. **Fallback** (if a booking arrives without the ref — e.g. someone books from a bare
+link): match on event type + date, disambiguated by attendee name; ambiguous → alert, never
+guess.
 
 ---
 
@@ -203,8 +293,7 @@ Three inputs decide which 30-minute slots the client sees:
 > implementation; it's the most likely source of a confusing bug.
 
 A second loop to avoid: the tool creates its own event when a client books (§5.1). Its
-write target is the **Rover calendar**, and the bot deletes its own placeholder on the
-webhook so only one event survives.
+write target is a **throwaway calendar**, not ROVER, so only the bot's event is visible.
 
 ### 6.1 Your availability rules
 
@@ -289,13 +378,70 @@ dates, re-issue links, alert if a time was already confirmed).
 
 ---
 
-## 8. Data model (additions)
+## 8. Private (non-Rover) bookings
+
+You also board clients booked directly. **They contact you on a different phone line that
+the bot never sees**, so nothing about them arrives automatically and no SMS thread exists.
+
+That absence is a feature: because there's no thread, there is **no possibility of the
+screening playbook firing at a long-standing private client**. No exclusion logic needed —
+the pipeline simply never learns about them.
+
+### 8.1 What the bot does and doesn't do
+
+**Does:**
+- Record the booking (pet, owner, dates) when you enter it.
+- Create the two **PENDING** calendar events on the Rover calendar, exactly like a Rover
+  booking.
+- Generate drop-off / pick-up **scheduling links** and show them to you to copy.
+- Flip them to **CONFIRMED** when the client books, via the same Cal.com poller (§4.1) —
+  it doesn't care who sent the link.
+
+**Doesn't:**
+- Message the client. You send the links yourself from your other phone.
+- Draft, screen, or reply to anything.
+
+### 8.2 Why it's worth doing at all
+
+The payoff is a **single source of truth for availability**. A private drop-off consumes a
+real slot; if the bot didn't know about it, Cal.com would happily offer that window to a
+Rover client and you'd be in two places at once. Entering private bookings keeps one
+calendar and one set of windows honest across both sides of the business.
+
+### 8.3 Entry
+
+A Telegram command — no phone number, since the bot won't be texting anyone:
+
+```
+/booking Willow 2026-09-01 2026-09-06 Sarah
+          pet   start      end        owner (optional)
+```
+
+The bot replies with a card showing the parsed booking and the two links, ready to copy
+into your other phone. Companion commands: `/bookings` (list upcoming),
+`/movebooking <id> <start> <end>`, `/cancelbooking <id>` — these stand in for the Rover
+signals (itinerary email, cancellation SMS) that don't exist here.
+
+### 8.4 Identity
+
+Private bookings have no phone-number thread key, so they get a **synthetic key**
+(`private:<slug>`, e.g. `private:willow-20260901`). It never collides with an SMS thread
+key (those are always `+1…`), and it keeps the same `scheduling_events` shape so the
+calendar and poller code paths are shared rather than duplicated.
+
+Reminders (48h) apply the same way, surfacing as a Telegram nudge for you to act on —
+though here you send the follow-up yourself.
+
+---
+
+## 9. Data model (additions)
 
 ```
 scheduling_events
   id             INTEGER PK
   thread_key     TEXT        -- the client's number (links to the SMS thread)
   episode        INTEGER     -- which booking (numbers are reused per client)
+  source         TEXT        -- rover | private  (private = manually entered, §8)
   kind           TEXT        -- dropoff | pickup | meet_greet
   status         TEXT        -- pending | confirmed | cancelled
   target_date    TEXT        -- the date the slot must fall on (null for M&G range)
@@ -308,9 +454,12 @@ scheduling_events
 
 `(thread_key, episode, kind)` is unique — one drop-off per booking.
 
+Private bookings use a **synthetic `thread_key`** (`private:<slug>`) and never create an
+SMS thread, so no drafter-exclusion logic is required — the pipeline never sees them (§8).
+
 ---
 
-## 9. Edge cases
+## 10. Edge cases
 
 | Case | Handling |
 |---|---|
@@ -329,38 +478,45 @@ scheduling_events
 | Booking confirmed before this feature existed | No backfill; applies to new confirmations only. |
 | Google Calendar API fails | Retry with backoff; on persistent failure alert — never silently skip an event. |
 | Client cancels their slot | Event reverts to PENDING (the booking still exists). |
+| Private client texts you | Arrives on your other line — the bot never sees it. No risk of auto-screening. |
+| Private booking modified/cancelled | No Rover signal exists — you use `/movebooking` / `/cancelbooking`. |
+| You forget to enter a private booking | Cal.com may offer that slot to a Rover client — the one real failure mode of manual entry (§8.2). Mitigation: enter it when you confirm it. |
+| Private and Rover client want the same slot | Whoever books first wins; the other sees it gone. Shared availability is the point. |
 | Link used after the date passed | Links expire at the target date; expired link → alert you. |
 | M&G that never converts to a booking | M&G event is independent; if the thread goes `not_suitable`, delete it. |
 | Booking cancelled | Cancellation SMS carries owner + full dates → delete both events, expire links, alert. |
-| Webhook never arrives after a client books | Periodic **reconcile** job compares tool bookings vs. our events and repairs drift (also catches a failed retitle from §5.1). |
-| Retitle fails after placeholder delete | Retry; on persistent failure alert — an unlabelled event on the calendar is confusing but recoverable. |
+| A poll is missed (service restart, network blip) | The next poll re-reads current state, so nothing is lost — polling is inherently self-healing, unlike a dropped webhook. |
+| Cal.com API unreachable for a while | Retry with backoff; alert if it persists, since scheduling silently stops working otherwise. |
+| Booking arrives with no `ref` (bare link) | Fall back to event type + date + attendee matching; ambiguous → alert, never guess. |
+| Duplicate events on ROVER | Symptom of Cal.com's destination calendar still pointing at ROVER — repoint it to the throwaway (§5.1). |
 | Confirmation email arrives before the SMS marker | Email path creates the events; the SMS marker is then a no-op (idempotent on `(thread, episode, kind)`). |
 | Client books a slot, then the booking is cancelled | Delete the tool booking too (or alert), so the slot is freed for others. |
 
 ---
 
-## 10. What reuses existing machinery
+## 11. What reuses existing machinery
 
 - Links go out through the **existing approve-and-send flow** — you still review every
   message. The link is generated *before* drafting so the drafter can include it.
-- The booking webhook receiver mirrors the **SMS webhook receiver** (HMAC-verified,
-  deduped, fast-ack).
+- The Cal.com poller mirrors existing background workers (the debouncer, the Telegram
+  poller, the daily watch-renewal) — same threading and alerting patterns.
 - Modification-email correlation reuses the **content/name matching** from truncation
   recovery.
 - Alerts reuse the **Telegram alert path**.
 
 ---
 
-## 11. Decisions log
+## 12. Decisions log
 
 1. **Scheduling layer:** **Option A** — Cal.com hosted, one event type per purpose,
-   date-parameterised links, webhook validates the booked date against `target_date`.
+   date-parameterised links; the poller validates the booked date against `target_date`.
 2. **PENDING placement:** a **default 30-minute time block**, marked **transparent** (free)
-   so it never blocks its own confirmation or other slots.
+   so it never blocks its own confirmation. On confirmation it flips to **opaque**, since a
+   booked time is a real commitment that should block other clients.
 3. **Calendar:** a dedicated **"Rover" calendar** — keeps the §6 feedback loop clean.
-4. **Event ownership:** the **tool owns the confirmed event**; the bot creates the PENDING
-   placeholder and relabels on booking (handoff in §5.1). Cal.com's write target must be
-   the Rover calendar.
+4. **Event ownership (revised v0.6):** the **bot owns its event end-to-end** — Cal.com's API
+   exposes no Google event id, so relabeling its event is impossible (§5.1). Cal.com writes
+   to a **throwaway calendar**; ROVER stays on its **conflict-checking (read)** list.
 5. **Reminders:** yes — if no slot is booked **48h before** the date, draft a nudge for
    your approval (it goes out through the normal approve-and-send flow).
 6. **Cancellations:** SMS marker, format captured in §2.
@@ -368,17 +524,35 @@ scheduling_events
    to 9–11a and 5–7p for all three event types.
 8. **Meet-and-greet:** open range (**next 7 days**), not date-locked.
 9. **Buffers:** **30 minutes** between slots (configurable; back-to-back acceptable).
+10. **Booking updates:** **poll Cal.com (~60s)** rather than webhooks — no public endpoint,
+    self-healing, doubles as the reconcile job (§4.1).
+11. **Private bookings:** **manually entered** via Telegram command (they arrive on a phone
+    line the bot never sees). Bot records them, places calendar events, and hands you links
+    to send yourself — no messaging, no drafting, no exclusion logic needed (§8).
 
 ---
 
-## 12. Open items before build
+## 13. Open items before build
 
 1. **Cal.com account setup** — three event types (`dropoff`, `pickup`, `meet-greet`), one
-   availability schedule matching §6.1, Google Calendar connected with **writes pointed at
-   the Rover calendar**, and a booking webhook registered.
+   availability schedule matching §6.1, and an **API key** (used by the poller; no webhook
+   needed). Google Calendar connected with:
+   - **writes → a throwaway calendar** (e.g. `Cal.com Raw`), NOT ROVER (§5.1);
+   - **conflict checking → ROVER + the throwaway** both checked.
+   - **Locations → In Person.** Testing revealed the event types default to **Cal Video**,
+     so a client booking a dog drop-off would receive a video-meeting link. Set `dropoff`
+     and `pickup` to In Person (address or attendee address). Meet-and-greet is In Person
+     at the park — though Cal Video is legitimately correct if you offer video M&Gs.
 2. **Google Calendar API scope** — add `calendar.events` to the existing OAuth app, create
    the dedicated "Rover" calendar. (Adding a scope invalidates the current token, so a
    one-time re-consent is needed.)
-3. **Phasing** — suggested order: C1 calendar client + PENDING events; C2 link generation
-   wired into drafts; C3 booking webhook (PENDING → CONFIRMED handoff); C4 modification +
-   cancellation handling; C5 reminders and the reconcile job.
+3. **Phasing / status**
+   - **C1 — DONE.** Calendar client + PENDING placeholders on confirmation.
+   - **C2 — DONE.** Cal.com link generation, scheduling message drafted for approval.
+   - **C3 — DONE.** Cal.com poller: confirm / reschedule / cancel, exact `ref` matching.
+   - **C4** — modification + cancellation handling (§7.1 dual strategy).
+   - **C5** — private-booking commands (§8).
+   - **C6** — 48h reminders.
+
+4. **Private-booking command syntax** — confirm the one-line format in §8.3 works for you,
+   or say if you'd prefer a guided prompt (bot asks pet → dates → owner one at a time).

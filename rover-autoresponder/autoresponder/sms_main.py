@@ -62,6 +62,13 @@ def main() -> None:
                               on_fire=lambda n: draft_for_thread(conn, n)).start()
         log.info("debouncer active: %ss window", config.DEBOUNCE_SECONDS)
 
+        # C3: poll Cal.com for booked slots (PENDING -> CONFIRMED). Also acts as the
+        # reconcile job, since each poll compares Cal.com's state against ours.
+        if config.CALCOM_API_KEY:
+            from .calcom_poller import poll_loop as calcom_poll_loop
+            threading.Thread(target=calcom_poll_loop, args=(conn,),
+                             daemon=True, name="calcom-poller").start()
+
         # S4: receive button taps AND text replies (the edit path) from Telegram.
         threading.Thread(
             target=poll_loop,
