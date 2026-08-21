@@ -14,7 +14,7 @@ confirmed booking that predates the bot).
 """
 import logging
 
-from . import store
+from . import config, store
 from .sms_parser import parse_sms
 
 log = logging.getLogger(__name__)
@@ -57,6 +57,16 @@ def handle_sms(conn, sender: str, body: str, schedule_draft=None):
         if msg.kind == "confirmed":
             # They actually booked — a future request skips screening entirely.
             store.mark_has_booked(conn, sender)
+            # Addendum B / C1: place PENDING drop-off + pick-up on the ROVER calendar.
+            if config.GOOGLE_CALENDAR_ID:
+                try:
+                    from .scheduling import on_booking_confirmed
+                    row = store.get_thread(conn, sender)
+                    pet = msg.pet_name or (row[1] if row else None)
+                    on_booking_confirmed(conn, sender, pet,
+                                         msg.start_date, msg.end_date)
+                except Exception:
+                    log.exception("  calendar placement failed for %s", sender)
         log.info("%s (sms) | %s | owner=%s -> converted, no action",
                  msg.kind.upper(), sender, msg.owner_name)
 

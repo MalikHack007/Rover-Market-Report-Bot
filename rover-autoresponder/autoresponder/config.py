@@ -100,3 +100,8 @@ def email_fallback_only() -> bool:
 # consent (the Rover-messages account) — the token can only see that account's calendars.
 GOOGLE_CALENDAR_ID = os.environ.get("GOOGLE_CALENDAR_ID", "")
 CALENDAR_TIMEZONE = os.environ.get("CALENDAR_TIMEZONE", "America/Chicago")
+# Where a PENDING placeholder sits before the client picks a real time (30-min block,
+# marked transparent so it never blocks the slots we're offering).
+DEFAULT_DROPOFF_TIME = os.environ.get("DEFAULT_DROPOFF_TIME", "09:00")
+DEFAULT_PICKUP_TIME = os.environ.get("DEFAULT_PICKUP_TIME", "17:00")
+SLOT_MINUTES = int(os.environ.get("SLOT_MINUTES", "30"))

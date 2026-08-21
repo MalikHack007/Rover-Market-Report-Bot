@@ -52,6 +52,23 @@ CREATE TABLE IF NOT EXISTS sends (
   created_at     TEXT DEFAULT (datetime('now')),
   updated_at     TEXT DEFAULT (datetime('now'))
 );
+-- Addendum B / C1: one row per drop-off / pick-up / meet-greet placeholder.
+CREATE TABLE IF NOT EXISTS scheduling_events (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  thread_key     TEXT,
+  episode        INTEGER DEFAULT 1,
+  kind           TEXT,                      -- dropoff | pickup | meet_greet
+  source         TEXT DEFAULT 'rover',      -- rover | private
+  status         TEXT DEFAULT 'pending',    -- pending | confirmed | cancelled
+  target_date    TEXT,                      -- the date the slot must fall on
+  scheduled_at   TEXT,                      -- chosen start time; null while pending
+  gcal_event_id  TEXT,
+  booking_ref    TEXT,                      -- Cal.com booking id (C3)
+  link_url       TEXT,                      -- scheduling link (C2)
+  created_at     TEXT DEFAULT (datetime('now')),
+  updated_at     TEXT DEFAULT (datetime('now')),
+  UNIQUE (thread_key, episode, kind)
+);
 -- S4: maps a Telegram card to its thread, so replying to a card edits that draft.
 CREATE TABLE IF NOT EXISTS cards (
   message_id  INTEGER PRIMARY KEY,
@@ -555,3 +572,76 @@ def list_email_threads(conn: sqlite3.Connection):
             "WHERE EXISTS (SELECT 1 FROM messages m WHERE m.thread_key=t.thread_key "
             "              AND m.gmail_msg_id IS NOT NULL AND m.direction='inbound')")
         return cur.fetchall()
+
+
+# --- Addendum B / C1: scheduling events ---
+def add_scheduling_event(conn: sqlite3.Connection, thread_key: str, episode: int,
+                         kind: str, source: str = "rover", status: str = "pending",
+                         target_date: str = None, gcal_event_id: str = None,
+                         link_url: str = None):
+    """Insert a placeholder. Returns its id, or the existing id if already present."""
+    with _LOCK, conn:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO scheduling_events "
+            "(thread_key, episode, kind, source, status, target_date, gcal_event_id, "
+            " link_url) VALUES (?,?,?,?,?,?,?,?)",
+            (thread_key, episode, kind, source, status, target_date, gcal_event_id,
+             link_url))
+        if cur.rowcount:
+            return cur.lastrowid
+        row = conn.execute(
+            "SELECT id FROM scheduling_events WHERE thread_key=? AND episode=? AND kind=?",
+            (thread_key, episode, kind)).fetchone()
+        return row[0] if row else None
+
+
+def get_scheduling_event(conn: sqlite3.Connection, thread_key: str, episode: int,
+                         kind: str):
+    with _LOCK:
+        return conn.execute(
+            "SELECT id, status, target_date, scheduled_at, gcal_event_id, link_url "
+            "FROM scheduling_events WHERE thread_key=? AND episode=? AND kind=?",
+            (thread_key, episode, kind)).fetchone()
+
+
+def get_scheduling_event_by_id(conn: sqlite3.Connection, event_id: int):
+    with _LOCK:
+        return conn.execute(
+            "SELECT id, thread_key, episode, kind, source, status, target_date, "
+            "scheduled_at, gcal_event_id, booking_ref, link_url "
+            "FROM scheduling_events WHERE id=?", (event_id,)).fetchone()
+
+
+def update_scheduling_event(conn: sqlite3.Connection, event_id: int, **fields) -> None:
+    allowed = {"status", "target_date", "scheduled_at", "gcal_event_id", "booking_ref",
+               "link_url"}
+    sets, vals = [], []
+    for k, v in fields.items():
+        if k in allowed:
+            sets.append(f"{k}=?")
+            vals.append(v)
+    if not sets:
+        return
+    vals.append(event_id)
+    with _LOCK, conn:
+        conn.execute(
+            f"UPDATE scheduling_events SET {', '.join(sets)}, "
+            "updated_at=datetime('now') WHERE id=?", vals)
+
+
+def list_scheduling_events(conn: sqlite3.Connection, thread_key: str = None,
+                           status: str = None):
+    sql = ("SELECT id, thread_key, episode, kind, source, status, target_date, "
+           "scheduled_at, gcal_event_id, link_url FROM scheduling_events")
+    where, vals = [], []
+    if thread_key:
+        where.append("thread_key=?")
+        vals.append(thread_key)
+    if status:
+        where.append("status=?")
+        vals.append(status)
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY target_date, id"
+    with _LOCK:
+        return conn.execute(sql, vals).fetchall()
