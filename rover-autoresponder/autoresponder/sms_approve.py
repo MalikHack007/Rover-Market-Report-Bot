@@ -146,12 +146,23 @@ def handle_callback(conn, data: str, chat_id, message_id, cq_id) -> None:
         tg.answer_callback(cq_id, "Unknown action")
 
 
-def handle_text_reply(conn, text: str, chat_id, reply_to_message_id) -> bool:
-    """A plain Telegram message replying to a card.
+def handle_text_reply(conn, text: str, chat_id, reply_to_message_id,
+                      calendar=None) -> bool:
+    """A plain Telegram message.
 
-    "/pet Maple" or "/owner Daniel" sets a name manually (name-recovery layer 4);
-    anything else is treated as an edit of the draft.
+    "/booking …" and friends (C5) are handled first and work WITHOUT replying to a card.
+    Otherwise, a reply to a draft card is either "/pet Maple" / "/owner Daniel" (name
+    recovery, layer 4) or an edit of that draft.
     """
+    # C5: private-booking commands — standalone, no card needed.
+    if (text or "").strip().startswith("/") and not re.match(
+            r"^\s*/(pet|owner)\s+", text or "", re.IGNORECASE):
+        from .commands import handle_command
+        reply = handle_command(conn, text, calendar)
+        if reply:
+            tg.send_message(reply)
+            return True
+
     if not reply_to_message_id:
         return False
     number = store.thread_for_card(conn, reply_to_message_id)
