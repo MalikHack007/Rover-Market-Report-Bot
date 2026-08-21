@@ -32,15 +32,23 @@ def _gateway():
 def approve_and_send(conn, number: str, chat_id=None, message_id=None,
                      cq_id=None, gateway=None) -> bool:
     """Send the thread's pending text to the client. Returns True if transmitted."""
+    def _say(msg):
+        """Report an outcome. The callback is usually already answered (the spinner is
+        stopped up front), so fall back to a chat message."""
+        if cq_id:
+            tg.answer_callback(cq_id, msg)
+        else:
+            tg.send_message(msg)
+
     text = store.get_pending_text(conn, number)
     if not text:
-        tg.answer_callback(cq_id, "Nothing to send — draft is empty")
+        _say("⚠️ Nothing to send — the draft is empty.")
         return False
 
     send_key = store.claim_send(conn, number, text)
     if not send_key:
         # Same (thread, text) already claimed → double-tap or retry.
-        tg.answer_callback(cq_id, "Already sent — ignoring duplicate")
+        _say("↩️ Already sent — ignoring the duplicate.")
         log.warning("duplicate send suppressed for %s", number)
         return False
 
@@ -48,7 +56,6 @@ def approve_and_send(conn, number: str, chat_id=None, message_id=None,
     gateway_msg_id = gw.send(number, text, message_id=send_key)
     if not gateway_msg_id:
         store.release_send(conn, send_key)      # let the user retry the same text
-        tg.answer_callback(cq_id, "SEND FAILED — not delivered")
         tg.send_alert(f"SMS send FAILED to {number}. Nothing was delivered; retry from "
                       f"the card.")
         log.error("send failed for %s", number)
@@ -64,7 +71,7 @@ def approve_and_send(conn, number: str, chat_id=None, message_id=None,
 
     if chat_id and message_id:
         tg.edit_reply_markup(chat_id, message_id, reply_markup=None)  # buttons done
-    tg.answer_callback(cq_id, "Sent ✅")
+    _say(f"✅ Sent to {number}.")
     log.info("SENT to %s (%s): %r", number, gateway_msg_id, text[:80])
     return True
 
@@ -107,7 +114,8 @@ def redraft(conn, number: str, action: str, chat_id=None, message_id=None,
                         extra_instruction=_TONE.get(action))
     except Exception:
         log.exception("re-draft failed for %s", number)
-        tg.answer_callback(cq_id, "Re-draft failed — try again")
+        (tg.answer_callback(cq_id, "Re-draft failed") if cq_id
+         else tg.send_message("⚠️ Re-draft failed — try again."))
         return
     store.set_pending_text(conn, number, d.draft_text)
     store.set_last_draft(conn, number, d.draft_text)
@@ -115,35 +123,60 @@ def redraft(conn, number: str, action: str, chat_id=None, message_id=None,
     if chat_id and message_id:
         tg.edit_message_text(chat_id, message_id, card,
                              reply_markup=tg.build_sms_keyboard(number))
-    tg.answer_callback(cq_id, "Updated")
+    if cq_id:
+        tg.answer_callback(cq_id, "Updated")
 
 
 def handle_callback(conn, data: str, chat_id, message_id, cq_id) -> None:
-    """Route an inline-button tap. data == '<action>:<thread_key>'."""
+    """Route an inline-button tap. data == '<action>:<thread_key>'.
+
+    Telegram expires a callback query after ~15s, and on a slow link a single API call
+    can take that long — so we ANSWER FIRST (stopping the spinner immediately) and do
+    the work afterwards. The card edit is the real confirmation; failures alert.
+    """
     action, _, number = data.partition(":")
-    if not store.get_thread(conn, number):
-        tg.answer_callback(cq_id, "Thread not found")
+    log.info("CALLBACK %r | action=%s thread=%s", data, action, number)
+    _ACK = {
+        "send": "Sending…", "edit": "Reply with your version",
+        "regen": "Redrafting…", "warm": "Redrafting…", "short": "Redrafting…",
+        "conv": "Marking converted…", "unfit": "Marking not suitable…",
+    }
+    tg.answer_callback(cq_id, _ACK.get(action, "Working…"))
+
+    row = store.get_thread(conn, number)
+    if not row:
+        log.warning("  callback for unknown thread %r — nothing to update", number)
+        tg.send_message(f"⚠️ Thread <code>{tg._esc(number)}</code> isn't in the database, "
+                        "so nothing was changed.")
         return
+    log.info("  thread found: status=%s stage=%s", row[4], row[3])
 
     if action == "send":
-        approve_and_send(conn, number, chat_id, message_id, cq_id)
+        approve_and_send(conn, number, chat_id, message_id, cq_id=None)
     elif action == "edit":
         store.link_card(conn, message_id, number)
-        tg.answer_callback(cq_id, "Reply to this card with your version")
         tg.send_message("✏️ Reply to the draft card with your edited text, then tap "
                         "<b>Approve &amp; Send</b>.")
     elif action in _TONE:
-        redraft(conn, number, action, chat_id, message_id, cq_id)
-    elif action == "conv":
-        store.set_thread_status(conn, number, "converted")
+        redraft(conn, number, action, chat_id, message_id, cq_id=None)
+    elif action in ("conv", "unfit"):
+        new_status = "converted" if action == "conv" else "not_suitable"
+        store.set_thread_status(conn, number, new_status)
+        after = store.get_thread(conn, number)
+        actual = after[4] if after else "?"
+        log.info("  status %s -> %s (verified: %s)", row[4], new_status, actual)
         tg.edit_reply_markup(chat_id, message_id, reply_markup=None)
-        tg.answer_callback(cq_id, "Converted — drafting stopped")
-    elif action == "unfit":
-        store.set_thread_status(conn, number, "not_suitable")
-        tg.edit_reply_markup(chat_id, message_id, reply_markup=None)
-        tg.answer_callback(cq_id, "Marked not suitable — drafting stopped")
+        if actual == new_status:
+            label = "converted 🎉" if action == "conv" else "not suitable 🚫"
+            tg.send_message(f"Marked <b>{label}</b> — drafting stopped for "
+                            f"<code>{tg._esc(number)}</code>.")
+        else:
+            # Never claim success we can't verify.
+            log.error("  status write did NOT take for %s (still %s)", number, actual)
+            tg.send_message(f"⚠️ Could not update <code>{tg._esc(number)}</code> — "
+                            f"it is still <b>{actual}</b>. Check the logs.")
     else:
-        tg.answer_callback(cq_id, "Unknown action")
+        tg.send_message(f"Unknown action: {action}")
 
 
 def handle_text_reply(conn, text: str, chat_id, reply_to_message_id,
