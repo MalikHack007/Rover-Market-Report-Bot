@@ -21,7 +21,7 @@ from datetime import datetime
 
 from . import store
 from .scheduling import (
-    CANCELLED, DROPOFF, MEET_GREET, PICKUP, build_link, default_slot,
+    CANCELLED, CONFIRMED, DROPOFF, MEET_GREET, PICKUP, build_link, default_slot,
     on_booking_confirmed, ensure_links, title, PENDING,
 )
 
@@ -40,7 +40,8 @@ HELP = (
     "<b>Manage</b>\n"
     "<code>/bookings</code>  list upcoming\n"
     "<code>/links 12</code>  re-show the links for an entry\n"
-    "<code>/movebooking 12 2026-09-03 2026-09-08</code>  change dates\n"
+    "<code>/movebooking 12 2026-09-03 2026-09-08</code>  change dates (resets both legs)\n"
+    "<code>/retarget 12 2026-09-08</code>  fix ONE leg's date, keep its booked time\n"
     "<code>/cancelbooking 12</code>  delete its events\n\n"
     "Private clients text your other line, so the bot never messages them — "
     "it just gives you the links to send."
@@ -155,6 +156,12 @@ def cmd_cancelbooking(conn, args, calendar=None):
 
 
 def cmd_movebooking(conn, args, calendar=None):
+    """/movebooking <id> <start> <end> — change a booking's dates.
+
+    Only legs whose date ACTUALLY changes are touched. If a stay is extended by a day,
+    the drop-off is left completely alone — including a time the client already chose —
+    rather than being reset and re-linked for no reason.
+    """
     if len(args) < 3:
         return ("Usage: <code>/movebooking &lt;id&gt; &lt;start&gt; &lt;end&gt;</code>")
     row = store.get_scheduling_event_by_id(conn, _int(args[0]))
@@ -164,33 +171,64 @@ def cmd_movebooking(conn, args, calendar=None):
     start_day, end_day = parse_date(args[1]), parse_date(args[2])
     if not start_day or not end_day:
         return "Couldn't read those dates. Try YYYY-MM-DD."
+    if end_day < start_day:
+        return "The end date is before the start date."
 
     from .calendar_client import GoogleCalendar
     calendar = calendar or GoogleCalendar()
     t = store.get_thread(conn, thread_key)
     pet, owner = (t[1], t[0]) if t else (None, None)
 
+    moved, kept, invalidated = [], [], []
     for r in store.list_scheduling_events(conn, thread_key=thread_key):
-        ev_id, _tk, _ep, kind, _src, _status, _target, _sched, gcal_id, _link = r
+        ev_id, _tk, _ep, kind, _src, status, target, sched, gcal_id, _link = r
+        if status == CANCELLED:
+            continue
         day = start_day if kind == DROPOFF else end_day
+        if target == day.isoformat():
+            kept.append((kind, status, sched))       # unchanged — do not disturb
+            continue
+
         start_iso, end_iso = default_slot(day, kind)
         if gcal_id:
             calendar.update_event(gcal_id, summary=title(pet, kind, PENDING),
                                   start_iso=start_iso, end_iso=end_iso)
-        # The link embeds the date, so a move invalidates it — mint a fresh one.
+        if status == CONFIRMED and sched:
+            # Their chosen time was on the OLD date, so it no longer applies. Stop the
+            # poller re-confirming it from the still-live cal.com booking.
+            # NOTE: list_scheduling_events() doesn't include booking_ref, so read the
+            # full row rather than indexing into the abbreviated one.
+            full = store.get_scheduling_event_by_id(conn, ev_id)
+            store.ignore_calcom_booking(conn, full[9] if full else None)
+            invalidated.append((kind, sched))
         new_link = build_link(kind, day.isoformat(), owner, ref=ev_id)
         store.update_scheduling_event(conn, ev_id, target_date=day.isoformat(),
                                       status=PENDING, scheduled_at=None,
                                       booking_ref=None, link_url=new_link)
+        moved.append(kind)
+
     store.upsert_sms_thread(conn, thread_key,
                             stay_dates=f"{start_day} to {end_day}")
+    if not moved:
+        return (f"{pet or thread_key} is already {start_day:%a, %b %d} → "
+                f"{end_day:%a, %b %d}. Nothing changed.")
+
     links = ensure_links(conn, thread_key, store.get_episode(conn, thread_key), owner)
-    return (
-        f"Moved {pet or thread_key} to {start_day:%a, %b %d} → {end_day:%a, %b %d}.\n"
-        "Any previously booked times were cleared. New links:\n\n"
-        f"<b>Drop-off</b>\n<code>{links.get(DROPOFF, '—')}</code>\n\n"
-        f"<b>Pick-up</b>\n<code>{links.get(PICKUP, '—')}</code>"
-    )
+    out = [f"Moved {pet or thread_key} to {start_day:%a, %b %d} → {end_day:%a, %b %d}."]
+    for kind, status, sched in kept:
+        when = f", booked {sched[:16].replace('T', ' ')}" if sched else ""
+        out.append(f"• {_KIND_LABEL.get(kind, kind)} unchanged ({status}{when}) — "
+                   "left as is.")
+    for kind, sched in invalidated:
+        out.append(f"⚠️ {_KIND_LABEL.get(kind, kind)} was booked for "
+                   f"{sched[:16].replace('T', ' ')}; that date changed, so it needs "
+                   "rebooking. Cancel the old slot in Cal.com.")
+    if moved:
+        out.append("\nNew link(s) for the changed leg(s):")
+        for kind in moved:
+            out.append(f"<b>{_KIND_LABEL.get(kind, kind)}</b>\n"
+                       f"<code>{links.get(kind, '—')}</code>")
+    return "\n".join(out)
 
 
 def _int(x, default=-1):
@@ -220,6 +258,8 @@ def handle_command(conn, text, calendar=None):
             return cmd_meetgreet(conn, args, calendar)
         if cmd == "links":
             return cmd_links(conn, args)
+        if cmd in ("retarget", "redate"):
+            return cmd_retarget(conn, args, calendar)
         if cmd == "cancelbooking":
             return cmd_cancelbooking(conn, args, calendar)
         if cmd == "movebooking":
@@ -315,3 +355,54 @@ def cmd_links(conn, args):
         out.append(f"\n<b>{_KIND_LABEL.get(kind, kind)}</b> ({status}, {when})  "
                    f"<code>#{ev_id}</code>\n<code>{link or '— no link —'}</code>")
     return "\n".join(out)
+
+
+def cmd_retarget(conn, args, calendar=None):
+    """/retarget <id> <date> — change ONE leg's expected date, keeping its booked time.
+
+    For when a client shifts a day but has already picked their slot. Unlike
+    /movebooking (which resets both legs to PENDING and mints fresh links), this only
+    corrects target_date, so a confirmed time and its calendar event are untouched —
+    it just stops the date-validation check flagging a mismatch.
+
+    If the leg is still PENDING, the placeholder and its link move to the new date,
+    since nothing has been booked yet.
+    """
+    if len(args) < 2:
+        return ("Usage: <code>/retarget &lt;id&gt; &lt;date&gt;</code>\n"
+                "e.g. <code>/retarget 12 2026-09-08</code>\n"
+                "Changes the expected date for one leg, keeping any booked time.")
+    row = store.get_scheduling_event_by_id(conn, _int(args[0]))
+    if not row:
+        return f"No scheduling event with id {args[0]}."
+    day = parse_date(args[1])
+    if not day:
+        return f"Couldn't read that date ({args[1]}). Try YYYY-MM-DD."
+
+    (ev_id, thread_key, _ep, kind, _src, status, old_target,
+     scheduled_at, gcal_id, _bref, _link) = row
+    t = store.get_thread(conn, thread_key)
+    pet, owner = (t[1], t[0]) if t else (None, None)
+    label = _KIND_LABEL.get(kind, kind)
+
+    if status == CONFIRMED and scheduled_at:
+        # Keep the client's chosen time and its calendar event exactly as they are.
+        store.update_scheduling_event(conn, ev_id, target_date=day.isoformat())
+        return (f"📅 <b>{label} — {pet or thread_key}</b>\n"
+                f"Expected date {old_target} → <b>{day}</b>.\n"
+                f"Their booked time ({scheduled_at[:16].replace('T', ' ')}) and the "
+                "calendar event are unchanged.")
+
+    # Still unbooked: move the placeholder and re-mint the link for the new date.
+    from .calendar_client import GoogleCalendar
+    calendar = calendar or GoogleCalendar()
+    start_iso, end_iso = default_slot(day, kind)
+    if gcal_id:
+        calendar.update_event(gcal_id, summary=title(pet, kind, PENDING),
+                              start_iso=start_iso, end_iso=end_iso)
+    new_link = build_link(kind, day.isoformat(), owner, ref=ev_id)
+    store.update_scheduling_event(conn, ev_id, target_date=day.isoformat(),
+                                  link_url=new_link)
+    return (f"📅 <b>{label} — {pet or thread_key}</b>\n"
+            f"Moved {old_target} → <b>{day}</b> (still unbooked). New link:\n\n"
+            f"<code>{new_link}</code>")

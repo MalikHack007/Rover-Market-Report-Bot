@@ -233,3 +233,123 @@ def test_help_lists_the_new_commands(tmp_path, monkeypatch):
     out = handle_command(conn, "/help")
     for c in ("/dropoff", "/pickup", "/meetgreet", "/links"):
         assert c in out
+
+
+# --- /retarget: fix one leg's expected date without disturbing a booked time ---
+def test_retarget_keeps_a_confirmed_time(tmp_path, monkeypatch):
+    """The real case: a private client shifts pickup a day but already chose a slot."""
+    conn = _db(tmp_path, monkeypatch)
+    cal = FakeCalendar()
+    handle_command(conn, f"/booking Kylo {_future(10)} {_future(14)}", cal)
+    ev = [r for r in store.list_scheduling_events(conn) if r[3] == PICKUP][0]
+    store.update_scheduling_event(conn, ev[0], status="confirmed",
+                                  scheduled_at=f"{_future(14)}T09:00:00-05:00")
+    out = handle_command(conn, f"/retarget {ev[0]} {_future(15)}", cal)
+    row = store.get_scheduling_event_by_id(conn, ev[0])
+    assert row[6] == _future(15)                    # expected date updated
+    assert row[5] == "confirmed"                    # still confirmed
+    assert row[7] == f"{_future(14)}T09:00:00-05:00"  # booked time untouched
+    assert cal.updated == []                        # calendar event NOT moved
+    assert "unchanged" in out
+
+
+def test_retarget_moves_an_unbooked_leg(tmp_path, monkeypatch):
+    """Nothing booked yet -> move the placeholder and re-mint the link."""
+    conn = _db(tmp_path, monkeypatch)
+    cal = FakeCalendar()
+    handle_command(conn, f"/booking Kylo {_future(10)} {_future(14)}", cal)
+    ev = [r for r in store.list_scheduling_events(conn) if r[3] == DROPOFF][0]
+    old_link = store.get_scheduling_event_by_id(conn, ev[0])[10]
+    out = handle_command(conn, f"/retarget {ev[0]} {_future(11)}", cal)
+    row = store.get_scheduling_event_by_id(conn, ev[0])
+    assert row[6] == _future(11)
+    assert row[10] != old_link and _future(11) in row[10]   # link re-minted
+    assert cal.updated                                       # placeholder moved
+    assert "still unbooked" in out
+
+
+def test_retarget_does_not_touch_the_other_leg(tmp_path, monkeypatch):
+    conn = _db(tmp_path, monkeypatch)
+    cal = FakeCalendar()
+    handle_command(conn, f"/booking Kylo {_future(10)} {_future(14)}", cal)
+    drop = [r for r in store.list_scheduling_events(conn) if r[3] == DROPOFF][0]
+    pick_before = [r for r in store.list_scheduling_events(conn) if r[3] == PICKUP][0]
+    handle_command(conn, f"/retarget {drop[0]} {_future(11)}", cal)
+    pick_after = [r for r in store.list_scheduling_events(conn) if r[3] == PICKUP][0]
+    assert pick_after == pick_before
+
+
+def test_retarget_validation(tmp_path, monkeypatch):
+    conn = _db(tmp_path, monkeypatch)
+    assert "Usage" in handle_command(conn, "/retarget 1", FakeCalendar())
+    assert "No scheduling event" in handle_command(conn, "/retarget 999 2026-09-08",
+                                                   FakeCalendar())
+    cal = FakeCalendar()
+    handle_command(conn, f"/booking Kylo {_future(10)} {_future(14)}", cal)
+    ev = store.list_scheduling_events(conn)[0][0]
+    assert "Couldn't read" in handle_command(conn, f"/retarget {ev} notadate", cal)
+
+
+# --- /movebooking must not disturb legs whose date didn't change ---
+def test_move_leaves_unchanged_leg_completely_alone(tmp_path, monkeypatch):
+    """Extending a stay by a day must NOT reset a confirmed drop-off."""
+    conn = _db(tmp_path, monkeypatch)
+    cal = FakeCalendar()
+    handle_command(conn, f"/booking Kylo {_future(10)} {_future(14)}", cal)
+    drop = [r for r in store.list_scheduling_events(conn) if r[3] == DROPOFF][0]
+    store.update_scheduling_event(conn, drop[0], status="confirmed",
+                                  scheduled_at=f"{_future(10)}T09:00:00-05:00",
+                                  booking_ref="bk-keep")
+    before = store.get_scheduling_event_by_id(conn, drop[0])
+
+    # only the END date changes
+    out = handle_command(conn, f"/movebooking {drop[0]} {_future(10)} {_future(15)}", cal)
+    after = store.get_scheduling_event_by_id(conn, drop[0])
+    assert after == before                       # drop-off byte-identical
+    assert "unchanged" in out
+    # and the pick-up did move
+    pick = [r for r in store.list_scheduling_events(conn) if r[3] == PICKUP][0]
+    assert pick[6] == _future(15)
+
+
+def test_move_invalidates_a_confirmed_leg_whose_date_changed(tmp_path, monkeypatch):
+    conn = _db(tmp_path, monkeypatch)
+    cal = FakeCalendar()
+    handle_command(conn, f"/booking Kylo {_future(10)} {_future(14)}", cal)
+    pick = [r for r in store.list_scheduling_events(conn) if r[3] == PICKUP][0]
+    store.update_scheduling_event(conn, pick[0], status="confirmed",
+                                  scheduled_at=f"{_future(14)}T17:00:00-05:00",
+                                  booking_ref="bk-stale")
+    out = handle_command(conn, f"/movebooking {pick[0]} {_future(10)} {_future(16)}", cal)
+    row = store.get_scheduling_event_by_id(conn, pick[0])
+    assert row[6] == _future(16)
+    assert row[5] == PENDING and row[7] is None      # booked time cleared
+    assert "needs rebooking" in out
+
+
+def test_superseded_booking_is_not_reconfirmed_by_the_poller(tmp_path, monkeypatch):
+    """The old cal.com booking is still live; without neutralising it the poller
+    would re-confirm the invalid time on the next pass."""
+    from autoresponder.calcom_poller import _already_unmatched
+    conn = _db(tmp_path, monkeypatch)
+    cal = FakeCalendar()
+    handle_command(conn, f"/booking Kylo {_future(10)} {_future(14)}", cal)
+    pick = [r for r in store.list_scheduling_events(conn) if r[3] == PICKUP][0]
+    store.update_scheduling_event(conn, pick[0], status="confirmed",
+                                  scheduled_at=f"{_future(14)}T17:00:00-05:00",
+                                  booking_ref="bk-superseded")
+    handle_command(conn, f"/movebooking {pick[0]} {_future(10)} {_future(16)}", cal)
+    assert _already_unmatched(conn, "bk-superseded") is True
+
+
+def test_move_to_identical_dates_is_a_noop(tmp_path, monkeypatch):
+    conn = _db(tmp_path, monkeypatch)
+    cal = FakeCalendar()
+    handle_command(conn, f"/booking Kylo {_future(10)} {_future(14)}", cal)
+    before = store.list_scheduling_events(conn)
+    cal.updated.clear()
+    out = handle_command(conn, f"/movebooking {before[0][0]} {_future(10)} {_future(14)}",
+                         cal)
+    assert "Nothing changed" in out
+    assert store.list_scheduling_events(conn) == before
+    assert cal.updated == []                     # no pointless calendar writes

@@ -651,3 +651,13 @@ def meta_exists(conn: sqlite3.Connection, key: str) -> bool:
     """Read-only check (unlike sms_event_seen, which also records the key)."""
     with _LOCK:
         return conn.execute("SELECT 1 FROM meta WHERE key=?", (key,)).fetchone() is not None
+
+
+def ignore_calcom_booking(conn: sqlite3.Connection, booking_id: str) -> None:
+    """Tell the poller to skip a cal.com booking permanently.
+
+    Used when a booking's date changes: the old cal.com booking is still live, and
+    without this the poller would re-confirm it at the now-invalid time.
+    """
+    if booking_id:
+        set_meta(conn, f"sms_evt:calcom_unmatched:{booking_id}", "1")
