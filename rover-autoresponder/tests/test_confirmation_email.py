@@ -125,3 +125,86 @@ def test_awaiting_accept_alerts_and_does_not_draft(tmp_path, monkeypatch):
                schedule_draft=scheduled.append)
     assert scheduled == []                            # no wasted API call
     assert alerts and "ACCEPT" in alerts[0]
+
+
+# --- REAL email layout: label and value are in separate table cells ---
+# The hand-typed sample above has them inline, which is why this parsed in tests but
+# failed on live mail. This is the shape Gmail actually renders.
+REAL_SUBJECT = "Confirmed: Gus's upcoming booking from Sep 4, 2026 - Sep 7, 2026"
+REAL_BODY = """Your booking with Linda is
+confirmed
+.
+You're all set! See booking details, care instructions, and payment information.
+Success!
+Booking details
+Dates:
+Sep 4, 2026 - Sep 7, 2026
+Owner:
+Linda
+Phone number:
+(720) 370-7925
+Emergency contact:
+Request from Linda
+Location:
+Your home
+Address:
+9708 Cottle Dr
+Austin
+TX
+78753
+Pet information
+Pet(s):
+Gus
+Care instructions:
+Review pet profile(s)
+Payment information
+Booking price:
+$260.00
+"""
+
+
+def test_parses_real_multiline_layout():
+    info = parse_confirmation_email(REAL_SUBJECT, REAL_BODY)
+    assert info["pet_name"] == "Gus"
+    assert info["owner_name"] == "Linda"
+    assert info["phone"] == "+17203707925"
+    assert info["start_date"] == date(2026, 9, 4)
+    assert info["end_date"] == date(2026, 9, 7)
+
+
+def test_real_layout_places_calendar_events(tmp_path, monkeypatch):
+    conn = _db(tmp_path, monkeypatch)
+    cal = FakeCalendar()
+    assert handle_confirmation_email(conn, REAL_SUBJECT, REAL_BODY,
+                                     calendar=cal) == "+17203707925"
+    assert len(cal.created) == 2
+    assert store.get_scheduling_event(conn, "+17203707925", 1, DROPOFF)[2] == "2026-09-04"
+    assert store.get_scheduling_event(conn, "+17203707925", 1, PICKUP)[2] == "2026-09-07"
+
+
+def test_single_day_booking_has_no_end_date_in_subject():
+    """e.g. 'Confirmed: Royal's upcoming booking from Aug 19, 2026'"""
+    body = "Dates:\nAug 19, 2026\nOwner:\nCharlotte\nPhone number:\n(310) 555-0100\nPet(s):\nRoyal\n"
+    info = parse_confirmation_email(
+        "Confirmed: Royal's upcoming booking from Aug 19, 2026", body)
+    assert info["start_date"] == date(2026, 8, 19)
+    assert info["end_date"] == date(2026, 8, 19)      # same day, not None
+    assert info["phone"] == "+13105550100"
+
+
+def test_pet_names_with_punctuation():
+    for subj, pet in (
+        ("Confirmed: Cudi (Cuh-dee)'s upcoming booking from Aug 18, 2026", "Cudi (Cuh-dee)"),
+        ("Confirmed: Rooster and Rocky's upcoming booking from Aug 15, 2026 - Aug 18, 2026",
+         "Rooster and Rocky"),
+    ):
+        info = parse_confirmation_email(subj, "")
+        assert info is not None and info["pet_name"] == pet
+
+
+def test_phone_formats():
+    for raw, want in (("(720) 370-7925", "+17203707925"),
+                      ("720-370-7925", "+17203707925"),
+                      ("+1 (720) 370-7925", "+17203707925")):
+        body = f"Owner:\nLinda\nPhone number:\n{raw}\nPet(s):\nGus\n"
+        assert parse_confirmation_email(REAL_SUBJECT, body)["phone"] == want

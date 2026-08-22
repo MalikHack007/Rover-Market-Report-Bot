@@ -23,17 +23,27 @@ from . import store
 log = logging.getLogger(__name__)
 
 # "Confirmed: Buddy's upcoming booking from Nov 20, 2026 - Nov 27, 2026"
+# Single-day bookings have no end date: "Confirmed: Royal's upcoming booking from
+# Aug 19, 2026". Pet names can contain punctuation ("Cudi (Cuh-dee)", "Rooster and Rocky").
 SUBJECT_RE = re.compile(
     r"Confirmed:\s*(.+?)['\u2019]s upcoming booking from\s+"
-    r"([A-Za-z]{3}\s+\d{1,2},\s*\d{4})\s*[-–]\s*([A-Za-z]{3}\s+\d{1,2},\s*\d{4})",
+    r"([A-Za-z]{3,9}\s+\d{1,2},\s*\d{4})"
+    r"(?:\s*[-–—]\s*([A-Za-z]{3,9}\s+\d{1,2},\s*\d{4}))?",
     re.IGNORECASE)
 
+# In the real email each label and its value sit in SEPARATE table cells, so the text
+# rendering puts them on separate lines:
+#     Phone number:
+#     (720) 370-7925
+# The hand-typed sample had them inline, which is why this parsed in tests but failed on
+# real mail. These patterns allow any whitespace (including newlines) after the label.
 DATES_RE = re.compile(
-    r"Dates:\s*([A-Za-z]{3}\s+\d{1,2},\s*\d{4})\s*[-–]\s*([A-Za-z]{3}\s+\d{1,2},\s*\d{4})",
+    r"Dates:\s*([A-Za-z]{3,9}\s+\d{1,2},\s*\d{4})"
+    r"(?:\s*[-–—]\s*([A-Za-z]{3,9}\s+\d{1,2},\s*\d{4}))?",
     re.IGNORECASE)
-OWNER_RE = re.compile(r"^\s*Owner:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
-PHONE_RE = re.compile(r"Phone number:\s*([\d\s().+-]{10,})", re.IGNORECASE)
-PETS_RE = re.compile(r"Pet\(s\):\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
+OWNER_RE = re.compile(r"Owner:\s*\n?\s*([^\n]+)", re.IGNORECASE)
+PHONE_RE = re.compile(r"Phone number:\s*\n?\s*([+(]?\d[\d\s().-]{8,})", re.IGNORECASE)
+PETS_RE = re.compile(r"Pet\(s\):\s*\n?\s*([^\n]+)", re.IGNORECASE)
 
 
 def normalize_phone(raw):
@@ -62,12 +72,14 @@ def parse_confirmation_email(subject, body):
     m = SUBJECT_RE.search(subject or "")
     if not m:
         return None
-    pet, start_text, end_text = m.group(1), m.group(2), m.group(3)
+    pet, start_text = m.group(1), m.group(2)
+    end_text = m.group(3) or start_text          # single-day booking
 
     body = body or ""
     md = DATES_RE.search(body)
-    if md:                                   # body dates are the same, but prefer them
-        start_text, end_text = md.group(1), md.group(2)
+    if md:                                   # body dates are authoritative
+        start_text = md.group(1)
+        end_text = md.group(2) or start_text     # single-day bookings have no end
 
     owner = OWNER_RE.search(body)
     phone = PHONE_RE.search(body)
