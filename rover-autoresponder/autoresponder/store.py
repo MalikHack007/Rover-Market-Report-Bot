@@ -645,3 +645,9 @@ def list_scheduling_events(conn: sqlite3.Connection, thread_key: str = None,
     sql += " ORDER BY target_date, id"
     with _LOCK:
         return conn.execute(sql, vals).fetchall()
+
+
+def meta_exists(conn: sqlite3.Connection, key: str) -> bool:
+    """Read-only check (unlike sms_event_seen, which also records the key)."""
+    with _LOCK:
+        return conn.execute("SELECT 1 FROM meta WHERE key=?", (key,)).fetchone() is not None

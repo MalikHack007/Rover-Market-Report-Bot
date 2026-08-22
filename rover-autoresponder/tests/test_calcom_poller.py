@@ -245,3 +245,88 @@ def test_repeated_outage_alerts(tmp_path, monkeypatch):
     calcom_poller.poll_loop(conn, stop_event=stop, interval=0)
     assert alerts and "NOT reaching your calendar" in alerts[0]
     assert len(alerts) == 1          # alerts once, doesn't spam every poll
+
+
+# --- timezone (regression: 9pm Central looked like the NEXT day) ---
+def test_evening_booking_keeps_local_date(tmp_path, monkeypatch):
+    """cal.com sends UTC: 9:00 PM Sep 7 Central == 02:00 Sep 8 UTC."""
+    from autoresponder.calcom_poller import _iso_date, _local_iso
+    monkeypatch.setattr(config, "CALENDAR_TIMEZONE", "America/Chicago")
+    assert _iso_date("2026-09-08T02:00:00.000Z") == "2026-09-07"
+    assert _local_iso("2026-09-08T02:00:00.000Z").startswith("2026-09-07T21:00")
+
+
+def test_evening_booking_does_not_trigger_wrong_day_alert(tmp_path, monkeypatch):
+    alerts = []
+    conn = _db(tmp_path, monkeypatch)
+    monkeypatch.setattr(config, "CALENDAR_TIMEZONE", "America/Chicago")
+    monkeypatch.setattr(tg, "send_alert", lambda t: alerts.append(t) or True)
+    ev_id = store.get_scheduling_event(conn, A, 1, DROPOFF)[0]   # target 2026-09-01
+    # 9pm local on the correct day, expressed in UTC as the following day
+    process_bookings(conn, [_booking(ref=ev_id, start="2026-09-02T02:00:00.000Z",
+                                     end="2026-09-02T02:30:00.000Z")], FakeCalendar())
+    assert not any("booked" in a and "wrong" in a.lower() for a in alerts)
+    ev = store.get_scheduling_event(conn, A, 1, DROPOFF)
+    assert ev[1] == CONFIRMED
+    assert ev[3].startswith("2026-09-01T21:00")                   # stored as local
+
+
+# --- unmatched bookings must be surfaced, not swallowed ---
+def test_ambiguous_booking_alerts(tmp_path, monkeypatch):
+    """Several pending drop-offs share a date and the attendee matches none of them."""
+    alerts = []
+    conn = _db(tmp_path, monkeypatch)
+    monkeypatch.setattr(tg, "send_message", lambda t, **k: alerts.append(t) or 1)
+    for num, owner, pet in ((B, "Zed", "Bolt"), ("+15125550003", "Ada", "Cocoa")):
+        handle_sms(conn, num, (f"[ New booking request (boarding) from {owner}: {pet} "
+                               "(2 yr, 20 lbs) 09/01/2026 to 09/03/2026. "
+                               "Book @ r.rover.com/y ]"))
+        on_booking_confirmed(conn, num, pet, "09/01", "09/03",
+                             calendar=FakeCalendar(), today=date(2026, 8, 20))
+    # 3 pending drop-offs on 09/01, no ref, attendee matches nobody -> can't decide
+    process_bookings(conn, [_booking(ref=None, name="Nobody", uid="ambig-1")],
+                     FakeCalendar())
+    assert alerts and "not on your calendar" in alerts[0]
+
+
+def test_unmatched_booking_alerts_once_not_every_poll(tmp_path, monkeypatch):
+    """The poll window covers all FUTURE bookings, so an orphan is re-seen every 60s.
+    It must be reported once, then stay quiet."""
+    alerts = []
+    conn = _db(tmp_path, monkeypatch)
+    monkeypatch.setattr(tg, "send_message", lambda t, **k: alerts.append(t) or 1)
+    # a date with no pending event at all -> matches nothing
+    b = _booking(ref=None, slug="dropoff", start="2030-01-01T15:00:00.000Z",
+                 end="2030-01-01T15:30:00.000Z", uid="orphan-1")
+    for _ in range(3):
+        process_bookings(conn, [b], FakeCalendar())
+    assert len(alerts) == 1                    # deduped across polls
+
+
+def test_cancelled_orphan_is_ignored_quietly(tmp_path, monkeypatch):
+    """A cancelled booking we never placed is nothing to reconcile."""
+    alerts = []
+    conn = _db(tmp_path, monkeypatch)
+    monkeypatch.setattr(tg, "send_message", lambda t, **k: alerts.append(t) or 1)
+    b = _booking(ref=None, status="cancelled", uid="cancelled-orphan",
+                 start="2030-02-02T15:00:00.000Z", end="2030-02-02T15:30:00.000Z")
+    assert process_bookings(conn, [b], FakeCalendar()) == 0
+    assert alerts == []
+
+
+def test_stale_ref_never_hijacks_another_clients_event(tmp_path, monkeypatch):
+    """A booking whose entry was deleted must NOT fuzzy-match someone else's event.
+
+    Falling back to kind+date here would move a different client's calendar — worse
+    than doing nothing.
+    """
+    alerts = []
+    conn = _db(tmp_path, monkeypatch)
+    monkeypatch.setattr(tg, "send_message", lambda t, **k: alerts.append(t) or 1)
+    before = store.get_scheduling_event(conn, A, 1, DROPOFF)
+    stale = _booking(ref=9999, uid="stale-1", start="2026-09-01T15:00:00.000Z",
+                     end="2026-09-01T15:30:00.000Z", name="Ghost")
+    assert process_bookings(conn, [stale], FakeCalendar()) == 0
+    after = store.get_scheduling_event(conn, A, 1, DROPOFF)
+    assert after == before                      # untouched
+    assert alerts == []                          # and no spurious "ambiguous" alert
