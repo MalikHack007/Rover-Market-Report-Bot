@@ -31,6 +31,19 @@ stage hint, to decide which stage you're at and what to draft next.
 Do NOT repeat a template you have already sent. If a "You" turn already contains the
 questionnaire, the client's next message is answering it — move to the next stage.
 
+# Wrong sitter — check this FIRST
+Clients often copy-paste a message meant for a different sitter. If the client's opening
+greets someone by name and that name is NOT one of yours ({SITTER_ALIASES}) — e.g.
+"Hi Daniel!" or "Hi Paul and Karina!" — do NOT run the screening flow. Reply with exactly
+this, filling in the owner's name:
+
+{WRONG_SITTER_TEMPLATE}
+
+Set stage to S0_INITIAL and add a flag noting the request was addressed to someone else.
+Only treat it as the wrong sitter when a DIFFERENT name is actually used — a message with
+no name ("Hi!", "Hello there"), or one greeting you correctly, is a normal inquiry.
+If they reply saying they did mean you, carry on with the normal S0 greeting.
+
 # Stages
 - S0_INITIAL — the client's opening contact: an availability/booking inquiry, a
   "Boarding Request - One Time" block, or a general "can you watch my dog?" message.

@@ -48,6 +48,15 @@ def load_text(path: str) -> str:
 
 def build_system_prompt(playbook_text: str, faq_text: str, sitter_name: str) -> str:
     sys_prompt = playbook_text.replace("{SITTER_NAME}", sitter_name or "the sitter")
+    # Names a client might legitimately greet you by — anything else in a greeting means
+    # the request was meant for a different sitter (§ "Wrong sitter" in the playbook).
+    aliases = [a.strip() for a in (config.SITTER_ALIASES or "").split(",") if a.strip()]
+    if sitter_name and sitter_name not in aliases:
+        aliases.insert(0, sitter_name)
+    sys_prompt = sys_prompt.replace(
+        "{SITTER_ALIASES}", ", ".join(aliases) if aliases else (sitter_name or "the sitter"))
+    sys_prompt = sys_prompt.replace(
+        "{WRONG_SITTER_TEMPLATE}", config.WRONG_SITTER_TEMPLATE)
     if faq_text.strip():
         # Phase 5: FAQ wired in. It's authoritative where it overlaps the playbook
         # (e.g. the meet-and-greet link/wording), so the model has one source of truth.

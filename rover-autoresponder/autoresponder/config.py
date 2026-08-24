@@ -43,6 +43,10 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")   # SDK also reads t
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5")
 DRAFT_MAX_TOKENS = int(os.environ.get("DRAFT_MAX_TOKENS", "1024"))
 SITTER_NAME = os.environ.get("SITTER_NAME", "")               # e.g. how clients address you
+# Every name a client might legitimately greet you by (comma-separated). Used to spot
+# requests actually addressed to a DIFFERENT sitter — clients often copy-paste a
+# message meant for someone else.
+SITTER_ALIASES = os.environ.get("SITTER_ALIASES", "")
 DEBOUNCE_SECONDS = int(os.environ.get("DEBOUNCE_SECONDS", "45"))  # coalesce a burst into 1 draft
 _HERE = os.path.dirname(__file__)
 PLAYBOOK_PATH = os.environ.get("PLAYBOOK_PATH", os.path.join(_HERE, "playbook.md"))
@@ -133,4 +137,13 @@ SCHEDULING_LINKS_TEMPLATE = os.environ.get(
 MEETGREET_LINK_TEMPLATE = os.environ.get(
     "MEETGREET_LINK_TEMPLATE",
     "Happy to do a meet and greet! Pick a time that works for you here: {meetgreet_link}",
+)
+
+
+# Reply when a request is addressed to another sitter by name.
+WRONG_SITTER_TEMPLATE = os.environ.get(
+    "WRONG_SITTER_TEMPLATE",
+    "Hi {owner_name}, I noticed that this request isn't addressed to me. However if the "
+    "intended sitter isn't available or is not a good fit, I'd be happy to be your "
+    "backup plan. Just let me know! For now I will archive this request.",
 )

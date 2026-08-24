@@ -1,6 +1,6 @@
 import json
 
-from autoresponder import drafter
+from autoresponder import config, drafter
 from autoresponder.drafter import (
     Draft, build_system_prompt, build_user_content, parse_llm_json, draft_reply,
 )
@@ -101,3 +101,36 @@ def test_gate_active_thread_drafts():
 def test_gate_terminal_threads_never_draft():
     assert drafter.should_draft("converted") is False
     assert drafter.should_draft("not_suitable") is False
+
+
+# --- wrong-sitter rule ---
+def test_prompt_lists_sitter_aliases(monkeypatch):
+    """The model needs to know which names legitimately refer to you."""
+    monkeypatch.setattr(config, "SITTER_ALIASES", "Yujie, Malik")
+    playbook = "You are {SITTER_NAME}. Your names: {SITTER_ALIASES}. Say: {WRONG_SITTER_TEMPLATE}"
+    sp = build_system_prompt(playbook, "", "Onel")
+    assert "Onel" in sp and "Yujie" in sp and "Malik" in sp
+    assert "{SITTER_ALIASES}" not in sp
+
+
+def test_prompt_includes_the_wrong_sitter_reply(monkeypatch):
+    monkeypatch.setattr(config, "WRONG_SITTER_TEMPLATE", "Hi {owner_name}, wrong sitter!")
+    sp = build_system_prompt("Say: {WRONG_SITTER_TEMPLATE}", "", "Onel")
+    assert "wrong sitter!" in sp
+    assert "{WRONG_SITTER_TEMPLATE}" not in sp
+
+
+def test_sitter_name_not_duplicated_in_aliases(monkeypatch):
+    monkeypatch.setattr(config, "SITTER_ALIASES", "Onel, Yujie")
+    sp = build_system_prompt("{SITTER_ALIASES}", "", "Onel")
+    assert sp.count("Onel") == 1
+
+
+def test_real_playbook_contains_the_rule():
+    """Guards the shipped playbook, not just the substitution machinery."""
+    from autoresponder.drafter import load_text
+    text = load_text(config.PLAYBOOK_PATH)
+    assert "Wrong sitter" in text
+    assert "{SITTER_ALIASES}" in text
+    sp = build_system_prompt(text, "", "Onel")
+    assert "isn't addressed to me" in sp        # the template landed in the prompt
