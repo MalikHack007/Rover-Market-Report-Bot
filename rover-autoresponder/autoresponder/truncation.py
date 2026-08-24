@@ -32,9 +32,22 @@ def strip_truncation_tail(text: str) -> str:
     return FRAGMENT_TAIL_RE.sub("", t).strip()
 
 
-def prefix_for_match(text: str, chars: int = 60) -> str:
-    """A normalized leading slice, used to match the SMS against an email body."""
-    head = strip_truncation_tail(text)[:chars]
+# Clients answer the questionnaire by quoting it back, so the first ~124 characters are
+# OUR boilerplate ("1. Where are you in your sitter search? ...") and identical across
+# every client. Matching on a short prefix therefore matched the wrong client's email.
+# We now require the WHOLE truncated body to match, which is client-specific.
+MIN_PREFIX_CHARS = 80
+
+
+def prefix_for_match(text: str, chars: int = None) -> str:
+    """Normalized text used to match an SMS against an email body.
+
+    Defaults to the ENTIRE truncated message (minus the '(more at …)' tail and the
+    cut-off word). A short prefix is not discriminative — see above.
+    """
+    head = strip_truncation_tail(text)
+    if chars:
+        head = head[:chars]
     return re.sub(r"\s+", " ", head).strip().lower()
 
 
@@ -89,7 +102,10 @@ def recover_full_text(conn, number: str, truncated_text: str):
     email threads. Name correlation is still recorded when it succeeds, purely as a hint.
     """
     prefix = prefix_for_match(truncated_text)
-    if not prefix:
+    if not prefix or len(prefix) < MIN_PREFIX_CHARS:
+        # Too little to identify a client safely — leave it truncated and flagged.
+        log.info("truncated text on %s is too short to match safely (%d chars)",
+                 number, len(prefix))
         return None
 
     def _scan(thread_key):
@@ -108,8 +124,13 @@ def recover_full_text(conn, number: str, truncated_text: str):
         if hit:
             return hit
 
-    for thread_key, _owner, _pet in store.list_email_threads(conn):
+    sms_owner = _norm_name((store.get_thread(conn, number) or [None])[0])
+    for thread_key, e_owner, _pet in store.list_email_threads(conn):
         if thread_key == bound:
+            continue
+        # Second guard: if both sides name an owner and they disagree, this is a
+        # different client — never stitch their message into this thread.
+        if sms_owner and e_owner and _norm_name(e_owner) != sms_owner:
             continue
         hit = _scan(thread_key)
         if hit:

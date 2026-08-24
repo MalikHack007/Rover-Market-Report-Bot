@@ -169,3 +169,70 @@ def test_no_false_positive_on_different_client(tmp_path):
     _add_email_thread(conn, "other", "Someone Else", "Rex",
                       ["Completely unrelated message about a different dog entirely."])
     assert truncation.resolve_truncated(conn, CRIS) == 0       # nothing matches -> no guess
+
+
+# --- regression: questionnaire answers all START with OUR boilerplate ---
+# Clients quote the questionnaire back, so the first ~124 chars are identical across
+# every client. Matching on a short prefix stitched one client's message into another's
+# thread. Matching must use the whole message, plus an owner cross-check.
+QUESTIONNAIRE_HEAD = ("1. Where are you in your sitter search? Are you seriously "
+                      "considering booking with me, or still browsing a few other "
+                      "sitters? ")
+BLUE = "+15125551111"
+BLUE_TRUNC = (QUESTIONNAIRE_HEAD +
+              "We are browsing to find a good fit. In particular, we want someone who "
+              "will not take in other pets during her stay, as she gets anxious around "
+              "too many new dogs.  2. Does your dog experience separation anxiety? She "
+              "does not have separation anxiety... (more at https://r.rover.com/xyz )")
+BLUE_FULL = (QUESTIONNAIRE_HEAD +
+             "We are browsing to find a good fit. In particular, we want someone who\n"
+             "will not take in other pets during her stay, as she gets anxious around\n"
+             "too many new dogs.  2. Does your dog experience separation anxiety? She\n"
+             "does not have separation anxiety and is okay being left alone briefly.\n"
+             "Would you be ok meeting Blue at a neutral location like a dog park?")
+OTHER_FULL = (QUESTIONNAIRE_HEAD +
+              "- I am seriously considering booking with you if everything checks out.\n"
+              "2. She does pretty well alone; I keep her home while I work 10 AM to 5 PM.")
+
+
+def _blue(conn):
+    handle_sms(conn, BLUE, "[ New booking request (boarding) from Sam: Blue "
+                           "(3 yr, 40 lbs) 09/10/2026 to 09/12/2026. Book @ r.rover.com/x ]")
+    handle_sms(conn, BLUE, BLUE_TRUNC)
+
+
+def test_does_not_match_a_different_clients_questionnaire(tmp_path):
+    """The exact production failure: identical boilerplate, different client."""
+    conn = _db(tmp_path)
+    _blue(conn)
+    _add_email_thread(conn, "gthread-other", "Marta", "Nala", [OTHER_FULL])
+    assert truncation.resolve_truncated(conn, BLUE) == 0
+    convo = [t for _, t in store.get_conversation(conn, BLUE)]
+    assert not any("10 AM to 5 PM" in t for t in convo)     # no contamination
+    assert len(store.list_truncated(conn, BLUE)) == 1        # stays flagged instead
+
+
+def test_still_recovers_the_same_clients_message(tmp_path):
+    conn = _db(tmp_path)
+    _blue(conn)
+    _add_email_thread(conn, "gthread-sam", "Sam", "Blue", [BLUE_FULL])
+    assert truncation.resolve_truncated(conn, BLUE) == 1
+    assert any("dog park" in t for _, t in store.get_conversation(conn, BLUE))
+
+
+def test_owner_mismatch_blocks_a_content_match(tmp_path):
+    """Even if text somehow matched, a different owner name must veto it."""
+    conn = _db(tmp_path)
+    _blue(conn)
+    _add_email_thread(conn, "gthread-imposter", "Marta", "Nala", [BLUE_FULL])
+    assert truncation.resolve_truncated(conn, BLUE) == 0
+
+
+def test_very_short_truncation_is_not_matched(tmp_path):
+    """Too little text to identify anyone — better truncated than wrong."""
+    conn = _db(tmp_path)
+    handle_sms(conn, BLUE, "[ New booking request (boarding) from Sam: Blue "
+                           "(3 yr, 40 lbs) 09/10/2026 to 09/12/2026. Book @ r.rover.com/x ]")
+    handle_sms(conn, BLUE, "Sure... (more at https://r.rover.com/xyz )")
+    _add_email_thread(conn, "gthread-sam", "Sam", "Blue", ["Sure thing, sounds great!"])
+    assert truncation.resolve_truncated(conn, BLUE) == 0
