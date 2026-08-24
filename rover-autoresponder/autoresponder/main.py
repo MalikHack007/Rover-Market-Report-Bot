@@ -110,8 +110,7 @@ def draft_thread(conn, thread_key: str) -> None:
     if d.off_playbook:
         log.warning("  OFF-PLAYBOOK [%s] flags=%s (no draft) — needs your attention",
                     d.stage, d.flags)
-        telegram_notify.send_message(
-            telegram_notify.format_offplaybook_card(owner, d.flags, history))
+        telegram_notify.send_offplaybook_card(owner, d.flags, history)
         return
     store.set_last_draft(conn, thread_key, d.draft_text)
     flag_note = f" flags={d.flags}" if d.flags else ""
@@ -119,8 +118,8 @@ def draft_thread(conn, thread_key: str) -> None:
              d.stage, flag_note, len(history), d.draft_text)
     # Phase 3: push the draft card to Telegram for tap-to-copy.
     # Phase 4: attach the action buttons (Mark sent / Regenerate / tone / terminal).
-    telegram_notify.send_message(
-        telegram_notify.format_draft_card(owner, dates, d.stage, d.flags, history, d.draft_text),
+    telegram_notify.send_draft_card(
+        owner, dates, d.stage, d.flags, history, d.draft_text,
         reply_markup=telegram_notify.build_keyboard(thread_key))
 
 
@@ -182,7 +181,8 @@ def handle_callback(conn, data, chat_id, message_id, cq_id) -> None:
         store.set_last_draft(conn, thread_key, d.draft_text)
         tg.edit_message_text(
             chat_id, message_id,
-            tg.format_draft_card(owner, dates, d.stage, d.flags, history, d.draft_text),
+            tg.format_draft_card(owner, dates, d.stage, d.flags, history,
+                                 d.draft_text)[0],
             reply_markup=tg.build_keyboard(thread_key))
         tg.answer_callback(cq_id, "Updated")
 

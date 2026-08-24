@@ -92,7 +92,8 @@ def apply_edit(conn, number: str, new_text: str, chat_id=None, card_message_id=N
     store.set_pending_text(conn, number, new_text)
     owner, pet, dates, stage, status = store.get_thread(conn, number)
     history = store.get_conversation(conn, number)
-    card = tg.format_draft_card(owner, dates, stage, ["edited by you"], history, new_text)
+    card, _overflow = tg.format_draft_card(owner, dates, stage, ["edited by you"],
+                                           history, new_text)
     if chat_id and card_message_id:
         tg.edit_message_text(chat_id, card_message_id, card,
                              reply_markup=tg.build_sms_keyboard(number))
@@ -119,7 +120,8 @@ def redraft(conn, number: str, action: str, chat_id=None, message_id=None,
         return
     store.set_pending_text(conn, number, d.draft_text)
     store.set_last_draft(conn, number, d.draft_text)
-    card = tg.format_draft_card(owner, dates, d.stage, d.flags, history, d.draft_text)
+    card, _overflow = tg.format_draft_card(owner, dates, d.stage, d.flags, history,
+                                           d.draft_text)
     if chat_id and message_id:
         tg.edit_message_text(chat_id, message_id, card,
                              reply_markup=tg.build_sms_keyboard(number))

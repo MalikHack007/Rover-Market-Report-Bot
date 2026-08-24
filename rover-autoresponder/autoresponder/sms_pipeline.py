@@ -221,10 +221,9 @@ def draft_for_thread(conn, number: str) -> None:
         store.update_thread_stage(conn, number, "S3_POST_SCREEN")
         log.info("  RETURNING CLIENT draft (no API call) | %s\n----- draft -----\n%s\n"
                  "-----------------", number, text)
-        mid = telegram_notify.send_message(
-            telegram_notify.format_draft_card(
-                owner, dates, "S3_POST_SCREEN", ["returning client — screening skipped"],
-                history, text),
+        mid = telegram_notify.send_draft_card(
+            owner, dates, "S3_POST_SCREEN", ["returning client — screening skipped"],
+            history, text,
             reply_markup=telegram_notify.build_sms_keyboard(number))
         store.link_card(conn, mid, number)
         return
@@ -254,8 +253,7 @@ def draft_for_thread(conn, number: str) -> None:
     if not d.draft_text:
         # Defensive: an older prompt (or a stubborn model) returned nothing.
         log.warning("  empty draft on %s — sending attention card instead", number)
-        telegram_notify.send_message(
-            telegram_notify.format_offplaybook_card(owner, d.flags, history))
+        telegram_notify.send_offplaybook_card(owner, d.flags, history)
         return
 
     store.set_last_draft(conn, number, d.draft_text)
@@ -276,10 +274,9 @@ def draft_for_thread(conn, number: str) -> None:
              d.stage, f" flags={flags}" if flags else "", len(history), d.draft_text)
     # S4: card carries Approve & Send / Edit / tone / terminal buttons. Link the card
     # to the thread so replying to it edits this draft.
-    mid = telegram_notify.send_message(
-        telegram_notify.format_draft_card(owner, dates, d.stage, flags,
-                                          history, d.draft_text,
-                                          needs_review=d.off_playbook),
+    mid = telegram_notify.send_draft_card(
+        owner, dates, d.stage, flags, history, d.draft_text,
+        needs_review=d.off_playbook,
         reply_markup=telegram_notify.build_sms_keyboard(number))
     store.link_card(conn, mid, number)
 
@@ -310,10 +307,9 @@ def send_scheduling_links(conn, number: str) -> bool:
     history = store.get_conversation(conn, number)
     log.info("  SCHEDULING LINKS drafted for %s\n----- draft -----\n%s\n-----------------",
              number, text)
-    mid = telegram_notify.send_message(
-        telegram_notify.format_draft_card(
-            owner, dates, "SCHEDULING", ["booking confirmed — send the booking links"],
-            history, text),
+    mid = telegram_notify.send_draft_card(
+        owner, dates, "SCHEDULING", ["booking confirmed — send the booking links"],
+        history, text,
         reply_markup=telegram_notify.build_sms_keyboard(number))
     store.link_card(conn, mid, number)
     return True
