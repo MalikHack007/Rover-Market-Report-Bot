@@ -208,3 +208,103 @@ def test_phone_formats():
                       ("+1 (720) 370-7925", "+17203707925")):
         body = f"Owner:\nLinda\nPhone number:\n{raw}\nPet(s):\nGus\n"
         assert parse_confirmation_email(REAL_SUBJECT, body)["phone"] == want
+
+
+# --- don't cry wolf when the SMS marker already handled it ---
+def test_no_false_alarm_when_already_scheduled(tmp_path, monkeypatch):
+    """Both signals arrive for a normal booking. The SMS marker places the events;
+    the email must not then claim it is NOT on the calendar."""
+    alerts = []
+    conn = _db(tmp_path, monkeypatch)
+    monkeypatch.setattr(tg, "send_alert", lambda t: alerts.append(t) or True)
+    # SMS marker path already did the work
+    handle_sms(conn, "+15125559999", "[ New booking request (boarding) from Ann: Oscar "
+                                     "(4 yr, 30 lbs) 09/04/2026 to 09/07/2026. "
+                                     "Book @ r.rover.com/x ]")
+    from autoresponder.scheduling import on_booking_confirmed
+    on_booking_confirmed(conn, "+15125559999", "Oscar", "09/04/2026", "09/07/2026",
+                         calendar=FakeCalendar())
+    # then the email arrives WITHOUT a usable phone number
+    body = "Dates:\nSep 4, 2026 - Sep 7, 2026\nOwner:\nAnn\nPet(s):\nOscar\n"
+    handle_confirmation_email(conn, "Confirmed: Oscar's upcoming booking from "
+                                    "Sep 4, 2026 - Sep 7, 2026", body,
+                              calendar=FakeCalendar())
+    assert alerts == []                       # no contradictory warning
+
+
+def test_still_alerts_when_genuinely_unmatched(tmp_path, monkeypatch):
+    alerts = []
+    conn = _db(tmp_path, monkeypatch)
+    monkeypatch.setattr(tg, "send_alert", lambda t: alerts.append(t) or True)
+    body = "Dates:\nSep 4, 2026 - Sep 7, 2026\nOwner:\nAnn\nPet(s):\nNobodysDog\n"
+    assert handle_confirmation_email(conn, "Confirmed: NobodysDog's upcoming booking "
+                                           "from Sep 4, 2026 - Sep 7, 2026", body,
+                                     calendar=FakeCalendar()) is None
+    assert alerts and "NOT on your calendar" in alerts[0]
+
+
+def test_pet_match_requires_the_same_date(tmp_path, monkeypatch):
+    """A same-named pet on a different date must not suppress the alert."""
+    alerts = []
+    conn = _db(tmp_path, monkeypatch)
+    monkeypatch.setattr(tg, "send_alert", lambda t: alerts.append(t) or True)
+    handle_sms(conn, "+15125559999", "[ New booking request (boarding) from Ann: Oscar "
+                                     "(4 yr, 30 lbs) 12/01/2026 to 12/03/2026. "
+                                     "Book @ r.rover.com/x ]")
+    from autoresponder.scheduling import on_booking_confirmed
+    on_booking_confirmed(conn, "+15125559999", "Oscar", "12/01/2026", "12/03/2026",
+                         calendar=FakeCalendar())
+    body = "Dates:\nSep 4, 2026 - Sep 7, 2026\nOwner:\nAnn\nPet(s):\nOscar\n"
+    handle_confirmation_email(conn, "Confirmed: Oscar's upcoming booking from "
+                                    "Sep 4, 2026 - Sep 7, 2026", body,
+                              calendar=FakeCalendar())
+    assert alerts                              # different booking -> still alerts
+
+
+# --- tolerant phone extraction ---
+def test_phone_label_without_colon_and_blank_lines():
+    body = "Owner:\nLinda\nPhone number\n\n\n(720) 370-7925\nPet(s):\nGus\n"
+    assert parse_confirmation_email(REAL_SUBJECT, body)["phone"] == "+17203707925"
+
+
+def test_phone_spaced_format():
+    body = "Owner:\nLinda\nPhone number:\n+1 720 370 7925\nPet(s):\nGus\n"
+    assert parse_confirmation_email(REAL_SUBJECT, body)["phone"] == "+17203707925"
+
+
+def test_no_phone_at_all_returns_none():
+    body = "Owner:\nLinda\nPet(s):\nGus\n"
+    assert parse_confirmation_email(REAL_SUBJECT, body)["phone"] is None
+
+
+# --- both signals fire for a normal booking: no duplicate work ---
+def _both_signals(conn, cal, cards, monkeypatch):
+    from unittest.mock import patch
+    monkeypatch.setattr(tg, "send_message", lambda t, **k: cards.append(t) or 1)
+    with patch("autoresponder.scheduling.GoogleCalendar", lambda *a, **k: cal):
+        handle_sms(conn, PHONE, "[ New booking request (boarding) from J: Buddy "
+                                "(3 yr, 50 lbs) 11/20/2026 to 11/27/2026. "
+                                "Book @ r.rover.com/x ]")
+        handle_sms(conn, PHONE, "[ J has confirmed a booking request (stay) with Buddy "
+                                "from 11/20 to 11/27 ]")
+        mid_events = len(store.list_scheduling_events(conn))
+        mid_cards = len(cards)
+        handle_confirmation_email(conn, SUBJECT, BODY, calendar=cal)
+    return mid_events, mid_cards
+
+
+def test_email_after_sms_creates_no_duplicate_events(tmp_path, monkeypatch):
+    conn = _db(tmp_path, monkeypatch)
+    cal, cards = FakeCalendar(), []
+    mid_events, _ = _both_signals(conn, cal, cards, monkeypatch)
+    assert mid_events == 2
+    assert len(store.list_scheduling_events(conn)) == 2      # still 2, not 4
+    assert len(cal.created) == 2                             # no extra calendar writes
+
+
+def test_email_after_sms_does_not_resend_the_links_card(tmp_path, monkeypatch):
+    """The events dedupe on their unique constraint, but the card would not."""
+    conn = _db(tmp_path, monkeypatch)
+    cal, cards = FakeCalendar(), []
+    _, mid_cards = _both_signals(conn, cal, cards, monkeypatch)
+    assert len(cards) == mid_cards                            # no second links card

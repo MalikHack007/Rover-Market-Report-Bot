@@ -40,10 +40,13 @@ def process_message_id(service, conn, schedule_draft, msg_id: str) -> None:
     pm = parse_notification(subject, body_text, gmail_msg_id=msg_id, thread_key=thread_id)
     if not store.record_message(conn, pm):
         return
-    dispatch(conn, pm, schedule_draft)
+    # Pass the FULL body, not pm.message_text: that field only holds the text between
+    # "{owner} says:" and "Reply now", which confirmation emails don't have — so it is
+    # None for them, and the confirmation parser was reading an empty string.
+    dispatch(conn, pm, schedule_draft, body_text=body_text)
 
 
-def dispatch(conn, pm, schedule_draft) -> None:
+def dispatch(conn, pm, schedule_draft, body_text=None) -> None:
     """Route a stored message by subject kind.
 
     inquiry  -> schedule a (debounced) draft for the thread.
@@ -54,7 +57,8 @@ def dispatch(conn, pm, schedule_draft) -> None:
     if config.GOOGLE_CALENDAR_ID:
         try:
             from .confirmation_email import handle_confirmation_email
-            if handle_confirmation_email(conn, pm.raw_subject, pm.message_text):
+            if handle_confirmation_email(conn, pm.raw_subject,
+                                         body_text or pm.message_text):
                 return
         except Exception:
             log.exception("confirmation-email handling failed")
@@ -315,7 +319,7 @@ def run_replay(path: str) -> None:
         pm.message_text,
     )
     # Replay drafts immediately (no debounce) for single-file dev testing.
-    dispatch(conn, pm, lambda tk: draft_thread(conn, tk))
+    dispatch(conn, pm, lambda tk: draft_thread(conn, tk), body_text=raw)
 
 
 # Phase 5 hardening: alert on a fatal boot/crash. The disabled_client outage

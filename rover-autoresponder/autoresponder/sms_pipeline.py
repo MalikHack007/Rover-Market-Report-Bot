@@ -295,10 +295,21 @@ def send_scheduling_links(conn, number: str) -> bool:
     from . import telegram_notify
     from .scheduling import build_scheduling_draft
 
+    # A normal booking fires BOTH signals (SMS marker + confirmation email). The calendar
+    # events are deduped by their unique constraint, but this card is not — guard it so
+    # you don't get the links twice.
+    episode = store.get_episode(conn, number)
+    sent_key = f"links_sent:{number}:{episode}"
+    if store.meta_exists(conn, sent_key):
+        log.info("  scheduling links already sent for %s (episode %d) — not resending",
+                 number, episode)
+        return False
+
     text, links = build_scheduling_draft(conn, number)
     if not text:
         log.warning("  no scheduling links for %s — skipping link message", number)
         return False
+    store.set_meta(conn, sent_key, "1")
 
     row = store.get_thread(conn, number)
     owner, pet, dates = (row[0], row[1], row[2]) if row else (None, None, None)
