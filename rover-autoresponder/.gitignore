@@ -5,6 +5,7 @@ __pycache__/
 credentials.json
 token.json
 *.db
+*.db.bootalert
 pubsub-sa.json
 *-sa.json
 # Personal/business content (address, links, your wording) — keep out of git.
