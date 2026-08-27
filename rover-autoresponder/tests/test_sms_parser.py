@@ -43,6 +43,31 @@ def test_confirmed_marker():
     assert m.owner_name == "Brenna D."
     assert m.pet_name == "Alfie"
     assert m.start_date == "08/13"
+    assert m.end_date == "08/14"
+
+# --- real single-date confirmed samples: Rover uses "on <date>" (no range) for
+# day care and single-night stays. Previously these fell through to an ordinary
+# message and never converted over SMS (only rescued by the confirmation email). ---
+def test_confirmed_marker_single_date_daycare():
+    body = ("[ Revanth A. has confirmed a booking request (daycare) with Blue "
+            "on 08/31 - View on Rover r.rover.com/dNpLTP ]")
+    m = parse_sms(N, body)
+    assert m.kind == "confirmed"
+    assert m.service == "daycare"
+    assert m.owner_name == "Revanth A."
+    assert m.pet_name == "Blue"
+    assert m.start_date == "08/31"
+    assert m.end_date is None
+
+def test_confirmed_marker_single_night_stay():
+    body = ("[ Samyak K. has confirmed a booking request (stay) with Coco "
+            "on 08/15 - View on Rover r.rover.com/abc123 ]")
+    m = parse_sms(N, body)
+    assert m.kind == "confirmed"
+    assert m.owner_name == "Samyak K."
+    assert m.pet_name == "Coco"
+    assert m.start_date == "08/15"
+    assert m.end_date is None
 
 # --- real modified sample (Joshua) ---
 def test_modified_marker():

@@ -37,6 +37,15 @@ CONFIRMED_RE = re.compile(
     r"(\d{1,2}/\d{1,2}(?:/\d{2,4})?)",
     re.IGNORECASE | re.DOTALL,
 )
+# Single-date confirmation variant (day care, single-night stays): Rover drops the
+# range and writes "... with Blue on 08/31 - ...". Without this, single-date bookings
+# confirmed over SMS fall through to an ordinary message and never convert — they only
+# get rescued if the confirmation email happens to arrive. Mirrors INQUIRY_SINGLE_RE.
+CONFIRMED_SINGLE_RE = re.compile(
+    r"(.+?)\s+has confirmed a booking request\s*(?:\(([^)]+)\))?\s*"
+    r"with\s+(.+?)\s+on\s+(\d{1,2}/\d{1,2}(?:/\d{2,4})?)",
+    re.IGNORECASE | re.DOTALL,
+)
 MODIFIED_RE = re.compile(
     r"Your upcoming booking with\s+(.+?)\s+has been modified", re.IGNORECASE)
 # Pay-first flow: the client has paid and is waiting on YOU to accept. No reply is
@@ -110,6 +119,18 @@ def parse_sms(sender: str, body: str) -> SmsMessage:
         msg.service = (m.group(2) or "").strip() or None
         msg.pet_name = _pet_name(m.group(3))
         msg.start_date, msg.end_date = m.group(4), m.group(5)
+        return msg
+
+    # Single-date confirmation (day care / single-night): "... with Blue on 08/31 - ...".
+    # Tried AFTER the range form so a normal "from X to Y" never lands here by accident.
+    # end_date stays None; on_booking_confirmed treats a single date as drop-off == pick-up.
+    m = CONFIRMED_SINGLE_RE.search(scan)
+    if m:
+        msg.kind = "confirmed"
+        msg.owner_name = m.group(1).strip()
+        msg.service = (m.group(2) or "").strip() or None
+        msg.pet_name = _pet_name(m.group(3))
+        msg.start_date = m.group(4)
         return msg
 
     m = INQUIRY_RE.search(scan)
