@@ -83,6 +83,27 @@ def poll_loop(on_callback, stop_event=None, long_poll_sec: int = 10,
             consecutive_errors = 0
             for upd in r.json().get("result", []):
                 offset = upd["update_id"] + 1
+                # `upd` is one Telegram Update object. `allowed_updates` limits us to the
+                # two variants dispatch_update handles; only the fields it actually reads
+                # are shown below (Telegram sends many more we ignore):
+                #
+                #   button tap (callback_query):
+                #     {"update_id": 900123,
+                #      "callback_query": {
+                #        "id": "4382bfe1",                 # -> answerCallbackQuery (cq_id)
+                #        "data": "send:+15551234567",      # "<action>:<thread_key>"
+                #        "message": {"message_id": 55,     # the card that was tapped
+                #                    "chat": {"id": 111}}}} # must equal TELEGRAM_CHAT_ID
+                #
+                #   text reply (message) — the edit / "/pet" / "/booking" path:
+                #     {"update_id": 900124,
+                #      "message": {
+                #        "text": "actually make it warmer",
+                #        "chat": {"id": 111},              # must equal TELEGRAM_CHAT_ID
+                #        "reply_to_message": {"message_id": 55}}} # set only when it's a reply
+                #
+                # Each update carries exactly ONE of callback_query / message; missing
+                # keys are why dispatch_update reads everything defensively with .get().
                 try:
                     dispatch_update(upd, on_callback, config.TELEGRAM_CHAT_ID,
                                     on_text=on_text)
