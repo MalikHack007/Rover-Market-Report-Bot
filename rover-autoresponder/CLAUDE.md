@@ -22,9 +22,11 @@ Per **Addendum A**, the system is **SMS-primary, email-fallback**, in **approve-
 
 - **Read = SMS via a phone gateway.** A **Pixel 9a** runs the **"SMS Gateway for Android"**
   app in **local mode**: it POSTs each inbound text to the box over **HTTPS on the LAN**
-  (that's what `certs/webhook.*` secures) and exposes a send-to-number endpoint. **No
-  third-party cloud relay** — messages flow only through the phone and the box. The brain
-  lives entirely on the box; the phone is a dumb modem.
+  (that's what `certs/webhook.*` secures) and exposes a send-to-number endpoint. For the
+  **SMS text path this stays fully local** — messages flow only through the phone and the
+  box (no third-party cloud relay), the brain lives on the box, and the phone is a dumb
+  modem. **This no-cloud guarantee now covers TEXT ONLY** — outbound photo/MMS updates need
+  a different transport; see "Outbound MMS / photo updates" below.
 - **Identity = the conversation's phone number.** Rover assigns a unique number per request
   that persists across the whole lifecycle, so the **number is the stable primary key**.
   Numbers are **reused across a client's future bookings**, so bookings are separated by an
@@ -50,6 +52,55 @@ Per **Addendum A**, the system is **SMS-primary, email-fallback**, in **approve-
 
 The "**S4**" the calendar addendum references is Addendum A's **approve-and-send phase**, not
 a fifth screening stage.
+
+---
+
+## Outbound MMS / photo updates — policy exception (decided 2026-08)
+
+**Designed, not built yet — see `rover_photo_updates_design_addendum_C.md` (Addendum C).**
+Tap-to-assign approach: Malik **taps a dog from the roster** (no name typing), sends that dog's
+photo(s) — **multiple photos per dog** — a caption is **picked from a pre-written pool (NO LLM)**
+and `{pet}` substituted, and on **one Send-all tap** the bot sends each dog's image(s) + caption
+as MMS to the owner. Roster is **Rover bookings only** (private clients are handled manually from
+Malik's personal number for now). Transport **proven end-to-end** (a real full-size dog photo
+reached the owner in-thread); the Rover relay carries MMS from Malik's own number (verified).
+
+- **The local gateway can't send MMS.** "SMS Gateway for Android" is text-only by design (its
+  docs: "does not support sending MMS"). So the photo path can't use it.
+- **httpSMS was tried and REJECTED** — it sends MMS but **caps attachments at a few KB**
+  (per their support), useless for real photos. Kept only as the record of that finding
+  (`mms_poc.py`).
+- **Chosen transport: Telerivet (cloud) + Cloudflare R2 hosting.** The Telerivet Gateway app
+  sends MMS **from Malik's own number** (`POST /v1/projects/<id>/messages/send`, Basic auth,
+  `media[]` = public URLs). Telerivet needs a public URL, so each photo is uploaded to **R2**
+  and sent as a **short-TTL presigned URL**. PoCs: `telerivet_poc.py`, `r2_upload.py`.
+- **This BREAKS "no third-party cloud relay", knowingly.** The MMS path rides Telerivet cloud
+  + FCM + R2, so the phone needs internet. The SMS **text** path stays fully local on "SMS
+  Gateway for Android" — **keep both transports; do not rip out the local text path.**
+- **Constraints (design around them):** Telerivet plan = **50 msgs/day + 200 API calls/day**;
+  carrier = **2 GB/mo data**. **Photos are sent FULL SIZE by decision — no downscaling/
+  recompression**; the only transform is **baking in EXIF orientation** (MMS transcoding
+  rotates portrait photos otherwise). Because of full-size sends, watch data use (can bind
+  before the 50/day count). `r2_upload.py` does orientation only (upright photos pass through
+  untouched); it no longer downscales.
+- **Still gated by Approve-and-send** — no unattended send. Malik reviews/edits captions, then
+  **one Send-all tap** dispatches the whole batch sequentially (batch approval = one deliberate
+  tap over a reviewed set, NOT an auto-send path; idempotent **per dog-update**). A dog's
+  multiple photos go as **one MMS = one send** against the 50/day cap. Addendum C adds
+  `photo_updates` + `photo_update_media` tables and `photo_approve`/`caption_picker`/
+  `telerivet_client`/`r2_host` modules; the keystone is reused, not re-implemented.
+- **Multi-image MMS is verified** (2026-08-29 PoC): 4 full-size images in one MMS delivered as
+  a single message, none missing, correctly oriented, counted as **one** Telerivet message. So
+  one-MMS-per-dog holds; a per-dog burst fallback is defensive-only.
+- **Telerivet is send-only** — incoming-message forwarding is turned OFF in the Telerivet
+  Gateway app (verified), so inbound texts don't consume the 50/day quota. Inbound is owned by
+  "SMS Gateway for Android." Re-check this setting after any app reinstall/re-provision.
+- **R2 hosting is the decided approach** (LAN-URL optimization not pursued).
+- **Delivery-status polling fits the 200 API-calls/day budget** (Addendum C §8.3): batched
+  status queries (one query covers all outstanding), poll-only-while-pending, adaptive back-off,
+  and a reserved send-budget guardrail. Comfortable at ~30 client-updates/day (~70/200 calls).
+- **Only deferred item:** private bookings (handled manually from Malik's personal number).
+  Design is otherwise build-ready.
 
 ---
 

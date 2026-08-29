@@ -86,7 +86,10 @@ Confirm real module names by reading the tree/files; don't infer them from the d
 
 ## Environment & running
 
-- Python **3.10** in a venv. Subsystem 2 has its own venv under `rover-autoresponder/`.
+- Python **3.10** in a **single venv shared by both subsystems** at the repo root:
+  `rover-automations/.venv` (activate: `source .venv/bin/activate`). This is what the
+  systemd units invoke (`.../rover-automations/.venv/bin/python`). There is **no** separate
+  venv under `rover-autoresponder/`.
 - Runs on **Xubuntu inside a bridged VirtualBox VM**. The bridged VM's broken IPv6 is why
   the auto-responder force-prefers IPv4 at startup — see the nested CLAUDE.md; don't undo it.
 - **Subsystem 1** runs on a **systemd timer** (`rover-report.service` + `.timer`) — the

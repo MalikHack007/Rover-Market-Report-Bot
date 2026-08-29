@@ -7,6 +7,8 @@ google-auth-oauthlib>=1.1
 google-cloud-pubsub>=2.18
 anthropic>=0.39
 requests>=2.31
+boto3>=1.34          # Cloudflare R2 uploads for outbound MMS photo hosting (r2_upload.py)
+Pillow>=10.0         # image preprocessing (EXIF orient + downscale) before MMS (r2_upload.py)
 
 # Dev/test
 pytest>=7.4
