@@ -39,6 +39,19 @@ def strip_truncation_tail(text: str) -> str:
 MIN_PREFIX_CHARS = 80
 
 
+# Rover's SMS channel downgrades typography to ASCII (hyphen, straight quotes) while the
+# email keeps the client's original "smart" punctuation (en/em dash, curly quotes, ellipsis).
+# Fold those to ASCII before matching — otherwise a single en-dash breaks startswith(). Real
+# case: Erin/Dakota, SMS "Sep 4 - 6" vs email "Sep 4 – 6" (U+002D vs U+2013).
+_FOLD = {0x2018: "'", 0x2019: "'", 0x201C: '"', 0x201D: '"',
+         0x2013: "-", 0x2014: "-", 0x2026: "...", 0x00A0: " "}
+
+
+def _normalize(text: str) -> str:
+    """Whitespace-collapsed, lowercased, punctuation-folded — for content matching."""
+    return re.sub(r"\s+", " ", (text or "").translate(_FOLD)).strip().lower()
+
+
 def prefix_for_match(text: str, chars: int = None) -> str:
     """Normalized text used to match an SMS against an email body.
 
@@ -48,7 +61,7 @@ def prefix_for_match(text: str, chars: int = None) -> str:
     head = strip_truncation_tail(text)
     if chars:
         head = head[:chars]
-    return re.sub(r"\s+", " ", head).strip().lower()
+    return _normalize(head)
 
 
 def _norm_name(name: str) -> str:
@@ -113,7 +126,7 @@ def recover_full_text(conn, number: str, truncated_text: str):
             if not text:
                 continue
             # Email hard-wraps lines where SMS doesn't, so compare whitespace-collapsed.
-            norm = re.sub(r"\s+", " ", text).strip().lower()
+            norm = _normalize(text)
             if norm.startswith(prefix) and len(text) > len(truncated_text):
                 return text
         return None

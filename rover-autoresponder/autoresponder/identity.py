@@ -27,9 +27,15 @@ log = logging.getLogger(__name__)
 # Enough of the booking block to identify the conversation, ignoring whitespace/wrapping.
 _BLOCK_PREFIX_CHARS = 70
 
+# Fold typographic punctuation to ASCII before content-matching: Rover's SMS is ASCII while
+# the email keeps the client's smart quotes/dashes, so an unfolded compare misses (same
+# root cause as the truncation en-dash bug — Erin/Dakota "Sep 4 - 6" vs "Sep 4 – 6").
+_FOLD = {0x2018: "'", 0x2019: "'", 0x201C: '"', 0x201D: '"',
+         0x2013: "-", 0x2014: "-", 0x2026: "...", 0x00A0: " "}
+
 
 def _norm(text: str) -> str:
-    return re.sub(r"\s+", " ", text or "").strip().lower()
+    return re.sub(r"\s+", " ", (text or "").translate(_FOLD)).strip().lower()
 
 
 def find_email_thread_by_content(conn, number: str):

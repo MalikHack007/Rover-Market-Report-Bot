@@ -102,6 +102,34 @@ def test_no_email_match_leaves_truncated(tmp_path):
     assert len(store.list_truncated(conn, A)) == 1        # still flagged for the card
 
 
+# --- regression: email keeps smart punctuation, SMS is ASCII -> must still recover ---
+# Real case (Erin/Dakota, rows 2620/2621): the email preserves the client's en-dash and curly
+# apostrophes while Rover's SMS downgrades to ASCII. An unfolded compare broke at "Sep 4 – 6"
+# (email U+2013) vs "Sep 4 - 6" (SMS U+002D), so recovery silently failed.
+E = "+15125559999"
+E_INQ = ("[ New booking request (boarding) from Erin: Dakota (2 yr, 50 lbs) "
+         "09/04/2026 to 09/06/2026. Book @ r.rover.com/x ]")
+E_TRUNC = ("Will you be available to sit Dakota on Sep 4 - 6? Hi, I'm looking for a sitter "
+           "for my boy Dakota. He is very loving and cuddly. He's also very playful. He is "
+           "potty trained so you wouldn't have to... (more at https://r.rover.com/tVtfvE )")
+E_FULL = ("Will you be available to sit Dakota on Sep 4 – 6? Hi, I’m looking for a "
+          "sitter for my boy Dakota. He is very loving and cuddly. He’s also very "
+          "playful. He is potty trained so you wouldn’t have to worry about accidents in "
+          "the house. He needs to be leashed at all times.")
+
+
+def test_recover_across_smart_vs_ascii_punctuation(tmp_path):
+    conn = _db(tmp_path)
+    handle_sms(conn, E, E_INQ)
+    handle_sms(conn, E, E_TRUNC)
+    _add_email_thread(conn, "gthread-erin", "Erin", "Dakota", [E_FULL])
+
+    assert truncation.resolve_truncated(conn, E) == 1              # folded compare matches
+    convo = [t for _, t in store.get_conversation(conn, E)]
+    assert any("leashed at all times" in t for t in convo)        # full text recovered
+    assert not any("more at" in t for t in convo)
+
+
 def test_untruncated_messages_untouched(tmp_path):
     conn = _db(tmp_path)
     handle_sms(conn, A, INQ)
