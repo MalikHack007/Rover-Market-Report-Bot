@@ -1,0 +1,15 @@
+# Photo-update caption pool — one caption per line. NO LLM; a line is picked at random
+# (avoiding the immediately-previous one for a client). Use {pet} for the dog's name.
+# Copy this to captions.txt (gitignored) and edit freely — add as many as you like.
+{pet} is having the best time here! 🐾
+Someone's making themselves right at home 🐶
+{pet} has been such a joy today!
+Play time was a big hit with {pet} today ☀️
+{pet} is all tuckered out after a fun day 😴
+Guess who made a new friend today? It's {pet}! 🐕
+{pet} says hi — doing great over here!
+A little sunshine and a lot of zoomies for {pet} today 🌞
+{pet} is settled in and happy as can be 🥰
+Big day of sniffs and snacks for {pet} 🦴
+{pet} wanted to send you a quick hello 👋
+All smiles from {pet} today 😊

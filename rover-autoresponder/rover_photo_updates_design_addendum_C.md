@@ -216,12 +216,20 @@ that dog's photos):
 
 ### 8.1 The review view and what "Send all" does
 
-Each dog gets **one card** with per-dog controls only — ✏️ Edit caption, 🔁 Another caption,
-➕ More photos (re-arm this dog as active), 🏷 Re-assign, ⏸ Hold (exclude from this batch),
-🗑 Discard — and **no per-dog send button**. A separate **batch summary card** carries the
-single **✅ Send all (N)** button, where N is the count of `ready` dog-updates. Editing a caption
-stores it as that dog's pending text (the Addendum A edit path); Send-all sends whatever text is
-pending on each.
+Each dog's review shows the **actual photos** followed by a control card:
+
+- **Photo preview** — the dog's photos are shown back by their existing Telegram `file_id`s (no
+  re-upload): one photo via `sendPhoto`, several as a `sendMediaGroup` album (Telegram caps an
+  album at 10, so extra photos spill into further albums). This is purely visual — albums can't
+  carry buttons — so it sits directly above the control card.
+- **Control card** — one text card per dog with per-dog controls only: ✏️ Edit caption,
+  🔁 Another caption, ➕ More photos (re-arm this dog as active), ⏸ Hold (exclude from this
+  batch), 🗑 Discard — and **no per-dog send button**. It names the owner + pet + photo count and
+  shows the caption. Editing a caption (reply to the card) or re-rolling only edits this text
+  card; the photos above are left as sent.
+
+A separate **batch summary card** carries the single **✅ Send all (N)** button, where N is the
+count of `ready` dog-updates. Send-all sends whatever caption is pending on each.
 
 On the Send-all tap, the bot dispatches the batch **sequentially, on its own**, for every
 `ready` (non-held, non-discarded) dog-update:
@@ -348,17 +356,24 @@ Adding photos to the active dog appends `photo_update_media` rows to its (still 
 
 ## 11. Modules & where logic lives
 
-| Concern | Module (new unless noted) |
-|---|---|
-| Photo intake from Telegram (`photo` updates, `getFile` download) | `telegram_poll.py` (extend dispatch) + `photo_pipeline.py` |
-| Roster of dogs in custody (**Rover only**) | `store.list_active_bookings()` (+ `scheduling.py` date logic) |
-| Tap-to-assign (active dog), multi-photo accumulate, re-assign | `photo_pipeline.py` |
-| Caption **pick** from the pool + `{pet}` substitution (no LLM) | `caption_picker.py` (+ `captions.txt` pool) |
-| Approval card, edit, batch send-all | `photo_approve.py` (mirrors `sms_approve.py`) |
-| R2 upload + presign + orient (original size) | `r2_host.py` (from `r2_upload.py`) |
-| Telerivet send + status | `telerivet_client.py` (from `telerivet_poc.py`) |
-| Delivery-status poller | thread in `rover-sms` (sibling of `calcom_poller.py`) |
-| Persistence / schema | `store.py`, `models.py` (`photo_updates` + `photo_update_media`) |
+Feature code lives in its **own subpackage `autoresponder/photos/`** so it doesn't clutter the
+top-level package next to the SMS/email/calendar modules. Only two tiny touchpoints reach into
+existing shared files (the store-init hook and the Telegram photo dispatch).
+
+| Concern | Module | Status |
+|---|---|---|
+| Feature settings (Telerivet / R2 / captions / budgets) | `photos/config.py` | ✅ built |
+| R2 upload + presign + orient (original size) | `photos/hosting.py` (from `r2_upload.py`) | ✅ built |
+| Telerivet send + batched status query | `photos/telerivet.py` (from `telerivet_poc.py`) | ✅ built |
+| Caption **pick** from pool + `{pet}` (no LLM) | `photos/captions.py` (+ `photos/captions.txt`) | ✅ built |
+| `photo_updates` / `photo_update_media` schema + CRUD + roster + budget/session meta | `photos/store.py` (shared conn+lock; hooked into `store.init_db`) | ✅ built |
+| Roster of dogs in custody (**Rover only**) | `photos/store.list_active_bookings()` (parses `stay_dates`, ±1-day grace) | ✅ built |
+| Telegram rendering (`ph:*` callbacks, keyboards, cards), **photo preview** (`sendPhoto`/`sendMediaGroup` by file_id) + `getFile` download | `photos/telegram.py` (reuses `telegram_notify` primitives) | ✅ built |
+| Tap-to-assign (active dog), multi-photo accumulate, re-assign, review cards | `photos/pipeline.py` | ✅ built |
+| Callback router, caption edit/re-roll, **batch Send-all**, 50/day budget guardrail | `photos/approve.py` (mirrors `sms_approve.py`) | ✅ built |
+| Photo intake + callback/text routing (`ph:*` → photos, else SMS) | `telegram_poll.py` (+`on_photo`) and `sms_main.py` (routing) | ✅ built |
+| Batched delivery-status poller | `photos/poller.py` (thread in `rover-sms`) | ⏳ P2 |
+| Eager R2 teardown after `delivered` | `photos/poller.py` / `hosting.delete()` | ⏳ P2 |
 
 **Service placement:** everything runs inside **`rover-sms.service`**, which already owns the
 single Telegram poller and the Telerivet-adjacent background workers. No new systemd unit; the

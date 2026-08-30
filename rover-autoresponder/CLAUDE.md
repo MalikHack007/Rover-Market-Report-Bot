@@ -57,7 +57,8 @@ a fifth screening stage.
 
 ## Outbound MMS / photo updates — policy exception (decided 2026-08)
 
-**Designed, not built yet — see `rover_photo_updates_design_addendum_C.md` (Addendum C).**
+**P1 core loop BUILT (2026-08-29) in the `autoresponder/photos/` subpackage; delivery-status
+poller (P2) pending — see `rover_photo_updates_design_addendum_C.md` (Addendum C) §11.**
 Tap-to-assign approach: Malik **taps a dog from the roster** (no name typing), sends that dog's
 photo(s) — **multiple photos per dog** — a caption is **picked from a pre-written pool (NO LLM)**
 and `{pet}` substituted, and on **one Send-all tap** the bot sends each dog's image(s) + caption

@@ -17,12 +17,12 @@ log = logging.getLogger(__name__)
 _API = "https://api.telegram.org/bot{token}/{method}"
 
 
-def dispatch_update(upd: dict, on_callback, allowed_chat, on_text=None) -> None:
+def dispatch_update(upd: dict, on_callback, allowed_chat, on_text=None, on_photo=None) -> None:
     """Handle one update.
 
     callback_query -> on_callback(data, chat_id, message_id, cq_id)
-    message (S4)   -> on_text(text, chat_id, reply_to_message_id) for the EDIT path:
-                      replying to a draft card with new wording edits that draft.
+    message text   -> on_text(text, chat_id, reply_to_message_id)  (SMS edit path / commands)
+    message photo  -> on_photo(file_id, chat_id)                   (Addendum C photo intake)
     Only traffic from allowed_chat is honored.
     """
     cq = upd.get("callback_query")
@@ -36,11 +36,17 @@ def dispatch_update(upd: dict, on_callback, allowed_chat, on_text=None) -> None:
         return
 
     m = upd.get("message")
-    if m and on_text:
-        chat_id = (m.get("chat") or {}).get("id")
-        if allowed_chat and str(chat_id) != str(allowed_chat):
-            log.warning("ignoring message from unexpected chat %s", chat_id)
-            return
+    if not m:
+        return
+    chat_id = (m.get("chat") or {}).get("id")
+    if allowed_chat and str(chat_id) != str(allowed_chat):
+        log.warning("ignoring message from unexpected chat %s", chat_id)
+        return
+    # A photo message (Addendum C): take the largest size Telegram offers.
+    if m.get("photo") and on_photo:
+        on_photo(m["photo"][-1]["file_id"], chat_id)
+        return
+    if on_text:
         text = m.get("text")
         reply_to = (m.get("reply_to_message") or {}).get("message_id")
         if text:
@@ -48,7 +54,7 @@ def dispatch_update(upd: dict, on_callback, allowed_chat, on_text=None) -> None:
 
 
 def poll_loop(on_callback, stop_event=None, long_poll_sec: int = 10,
-              on_text=None) -> None:
+              on_text=None, on_photo=None) -> None:
     """Long-poll Telegram for button taps / text replies.
 
     Timeout tuning: a long-poll connection can go stale silently (NAT timeout, Wi-Fi
@@ -70,7 +76,7 @@ def poll_loop(on_callback, stop_event=None, long_poll_sec: int = 10,
     log.info("telegram button poller active (%ss long-poll)", long_poll_sec)
     while not (stop_event and stop_event.is_set()):
         try:
-            allowed = ["callback_query"] + (["message"] if on_text else [])
+            allowed = ["callback_query"] + (["message"] if (on_text or on_photo) else [])
             params = {"timeout": long_poll_sec, "allowed_updates": allowed}
             if offset is not None:
                 params["offset"] = offset
@@ -106,7 +112,7 @@ def poll_loop(on_callback, stop_event=None, long_poll_sec: int = 10,
                 # keys are why dispatch_update reads everything defensively with .get().
                 try:
                     dispatch_update(upd, on_callback, config.TELEGRAM_CHAT_ID,
-                                    on_text=on_text)
+                                    on_text=on_text, on_photo=on_photo)
                 except Exception:
                     log.exception("callback handling failed")
         except requests.exceptions.RequestException as e:

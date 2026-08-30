@@ -107,6 +107,10 @@ def init_db(path: str) -> sqlite3.Connection:
             except sqlite3.OperationalError:
                 pass
         conn.commit()
+    # Photo-update feature owns its own tables in its subpackage (Addendum C). Deferred
+    # import avoids an import cycle (photos.store imports this module).
+    from .photos import store as _photos_store
+    _photos_store.init_schema(conn)
     return conn
 
 

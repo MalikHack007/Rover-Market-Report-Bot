@@ -69,11 +69,29 @@ def main() -> None:
             threading.Thread(target=calcom_poll_loop, args=(conn,),
                              daemon=True, name="calcom-poller").start()
 
-        # S4: receive button taps AND text replies (the edit path) from Telegram.
+        # Addendum C: the photo-update feature shares this one Telegram poller. Callbacks are
+        # routed by prefix (`ph:*` -> photos, else SMS); text tries photos first (it owns
+        # `/photos` and photo-card caption edits) then falls back to the SMS handler; and photo
+        # messages go to the photo intake.
+        from .photos import approve as photo_approve, pipeline as photo_pipeline
+
+        def on_callback(d, c, m, q):
+            if d.startswith("ph:"):
+                photo_approve.handle_callback(conn, d, c, m, q)
+            else:
+                sms_approve.handle_callback(conn, d, c, m, q)
+
+        def on_text(t, c, r):
+            if photo_approve.handle_text_reply(conn, t, c, r):
+                return
+            sms_approve.handle_text_reply(conn, t, c, r)
+
+        # S4 + Addendum C: button taps, text replies (SMS edit / photo caption / commands),
+        # and inbound photos.
         threading.Thread(
-            target=poll_loop,
-            args=(lambda d, c, m, q: sms_approve.handle_callback(conn, d, c, m, q),),
-            kwargs={"on_text": lambda t, c, r: sms_approve.handle_text_reply(conn, t, c, r)},
+            target=poll_loop, args=(on_callback,),
+            kwargs={"on_text": on_text,
+                    "on_photo": lambda fid, c: photo_pipeline.on_photo(conn, c, fid)},
             daemon=True, name="telegram-poller",
         ).start()
 
