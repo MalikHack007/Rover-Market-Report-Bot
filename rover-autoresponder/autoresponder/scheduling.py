@@ -75,15 +75,27 @@ def default_slot(day, kind):
 # --- placement -----------------------------------------------------------
 def create_pending_event(conn, thread_key, episode, kind, pet_name, target_day,
                          source="rover", calendar=None):
-    """Create one PENDING placeholder. Idempotent on (thread_key, episode, kind)."""
-    existing = store.get_scheduling_event(conn, thread_key, episode, kind)
-    if existing:
-        log.info("scheduling event already exists for %s/%s/%s — skipping",
-                 thread_key, episode, kind)
-        return existing[0]
+    """Create one PENDING placeholder. Idempotent on (thread_key, episode, kind), and
+    RACE-SAFE across processes: the DB row is CLAIMED before the calendar event is created,
+    so two near-simultaneous confirms — the SMS marker (rover-sms) and the confirmation email
+    (rover-email-fallback), which land within a second and run in different processes — can't
+    each place a duplicate Google Calendar event. Only the process that wins the claim writes
+    to the calendar; the loser skips it. (Previously the guard was check-then-act with the
+    calendar write BEFORE the DB insert, so both processes created events and the UNIQUE
+    constraint only deduped the DB row, orphaning the extra calendar events.)
+    """
     if not target_day:
         log.warning("no target date for %s %s — not creating an event", thread_key, kind)
         return None
+
+    # Claim the slot atomically FIRST. If we didn't win, another confirm already owns this
+    # leg — return its id and do NOT create a second calendar event.
+    event_id, won = store.claim_scheduling_event(
+        conn, thread_key, episode, kind, source=source, target_date=target_day.isoformat())
+    if not won:
+        log.info("scheduling event already claimed for %s/%s/%s — skipping calendar create",
+                 thread_key, episode, kind)
+        return event_id
 
     calendar = calendar or GoogleCalendar()
     start_iso, end_iso = default_slot(target_day, kind)
@@ -94,7 +106,8 @@ def create_pending_event(conn, thread_key, episode, kind, pet_name, target_day,
                      f"Thread: {thread_key} (episode {episode})"),
         transparency=TRANSPARENT)
     if not gcal_id:
-        # Never fail silently: an un-placed booking is invisible to you.
+        # Roll back the claim so a later confirm can retry; never fail silently.
+        store.delete_scheduling_event(conn, event_id)
         try:
             from . import telegram_notify
             telegram_notify.send_alert(
@@ -104,9 +117,8 @@ def create_pending_event(conn, thread_key, episode, kind, pet_name, target_day,
             log.exception("alert failed")
         return None
 
-    return store.add_scheduling_event(
-        conn, thread_key=thread_key, episode=episode, kind=kind, source=source,
-        target_date=target_day.isoformat(), gcal_event_id=gcal_id, status=PENDING)
+    store.update_scheduling_event(conn, event_id, gcal_event_id=gcal_id)
+    return event_id
 
 
 def on_booking_confirmed(conn, thread_key, pet_name, start_text, end_text,

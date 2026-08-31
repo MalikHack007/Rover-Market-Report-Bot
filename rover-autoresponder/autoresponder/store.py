@@ -599,6 +599,36 @@ def add_scheduling_event(conn: sqlite3.Connection, thread_key: str, episode: int
         return row[0] if row else None
 
 
+def claim_scheduling_event(conn: sqlite3.Connection, thread_key: str, episode: int,
+                           kind: str, source: str = "rover", target_date: str = None,
+                           status: str = "pending"):
+    """Atomically reserve the (thread_key, episode, kind) slot BEFORE any external side effect.
+
+    Returns (event_id, won). `won` is True iff THIS call created the row — only the winner
+    should then create the Google Calendar event. Because the reservation is a single
+    INSERT OR IGNORE (SQLite serializes it across connections/processes), exactly one of two
+    near-simultaneous confirms wins, which closes the cross-process double-create race.
+    """
+    with _LOCK, conn:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO scheduling_events "
+            "(thread_key, episode, kind, source, status, target_date) VALUES (?,?,?,?,?,?)",
+            (thread_key, episode, kind, source, status, target_date))
+        if cur.rowcount:
+            return cur.lastrowid, True
+        row = conn.execute(
+            "SELECT id FROM scheduling_events WHERE thread_key=? AND episode=? AND kind=?",
+            (thread_key, episode, kind)).fetchone()
+        return (row[0] if row else None), False
+
+
+def delete_scheduling_event(conn: sqlite3.Connection, event_id: int) -> None:
+    """Hard-delete a scheduling row — used to roll back a claim whose calendar create failed,
+    so a later confirm can re-claim and retry."""
+    with _LOCK, conn:
+        conn.execute("DELETE FROM scheduling_events WHERE id=?", (event_id,))
+
+
 def get_scheduling_event(conn: sqlite3.Connection, thread_key: str, episode: int,
                          kind: str):
     with _LOCK:

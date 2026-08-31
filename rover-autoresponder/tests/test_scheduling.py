@@ -159,3 +159,53 @@ def test_returning_client_new_episode_gets_own_events(tmp_path):
                          today=date(2026, 12, 1))
     assert len(cal.created) == 4          # two bookings, two events each
     assert store.get_scheduling_event(conn, A, 2, DROPOFF) is not None
+
+# --- regression: the Chiquita cross-process double-create bug (2026-08-30) ---
+def test_claim_scheduling_event_only_one_winner(tmp_path):
+    """The atomic claim: two reservations for the same leg → exactly one winner."""
+    conn = _db(tmp_path)
+    id1, won1 = store.claim_scheduling_event(conn, A, 1, DROPOFF, target_date="2026-09-03")
+    id2, won2 = store.claim_scheduling_event(conn, A, 1, DROPOFF, target_date="2026-09-03")
+    assert won1 is True and won2 is False and id1 == id2
+
+
+def test_concurrent_confirms_create_calendar_event_once(tmp_path):
+    """Real bug (Chiquita): the SMS confirm (rover-sms) and the confirmation email
+    (rover-email-fallback) fire within a second in DIFFERENT processes. With claim-first,
+    only the winner writes to the calendar, so exactly ONE placeholder is created per leg —
+    not two. (Two DB connections to the same file stand in for the two processes; SQLite's
+    INSERT OR IGNORE arbitrates the claim across them.)"""
+    from autoresponder.scheduling import create_pending_event
+    path = str(tmp_path / "race.db")
+    conn_sms = store.init_db(path)          # rover-sms
+    conn_email = store.init_db(path)        # rover-email-fallback (separate connection)
+    cal = FakeCalendar()                    # shared: counts every create_event call
+    day = date(2026, 9, 3)
+
+    id_a = create_pending_event(conn_sms, A, 1, DROPOFF, "Chiquita", day, calendar=cal)
+    id_b = create_pending_event(conn_email, A, 1, DROPOFF, "Chiquita", day, calendar=cal)
+
+    assert len(cal.created) == 1            # ONE calendar event, not two
+    assert id_a == id_b                     # both resolve to the same row
+    n = conn_sms.execute(
+        "SELECT COUNT(*) FROM scheduling_events WHERE thread_key=? AND kind=?",
+        (A, DROPOFF)).fetchone()[0]
+    assert n == 1
+    assert store.get_scheduling_event(conn_sms, A, 1, DROPOFF)[4] == "gcal-1"  # winner's gcal id
+
+
+def test_calendar_create_failure_rolls_back_claim(tmp_path, monkeypatch):
+    """If the winner's calendar create fails, the claim is rolled back so a later confirm can
+    retry (rather than a phantom row blocking it forever)."""
+    from autoresponder import telegram_notify as tg
+    from autoresponder.scheduling import create_pending_event
+    monkeypatch.setattr(tg, "send_alert", lambda t: True)
+    conn = _db(tmp_path)
+    day = date(2026, 9, 3)
+    assert create_pending_event(conn, A, 1, DROPOFF, "Chiquita", day,
+                                calendar=FakeCalendar(fail=True)) is None
+    assert store.get_scheduling_event(conn, A, 1, DROPOFF) is None      # no phantom row
+    # a retry with a working calendar now succeeds
+    ok = create_pending_event(conn, A, 1, DROPOFF, "Chiquita", day, calendar=FakeCalendar())
+    assert ok is not None
+    assert store.get_scheduling_event(conn, A, 1, DROPOFF)[4] == "gcal-1"
