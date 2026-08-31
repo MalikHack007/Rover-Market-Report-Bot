@@ -57,8 +57,10 @@ a fifth screening stage.
 
 ## Outbound MMS / photo updates — policy exception (decided 2026-08)
 
-**P1 + P2 BUILT (2026-08-30) in the `autoresponder/photos/` subpackage (P2 = batched
-delivery-status poller + R2 teardown). Not yet live-tested end-to-end — see
+**P1 + P2 + P3 BUILT in the `autoresponder/photos/` subpackage (P2 = batched
+delivery-status poller + R2 teardown; P3 (2026-08-31) = roster ✅-marks dogs already updated
+today, album/`media_group_id` intake handled once per album, and a "same caption for all"
+button — `test_photos_p3.py`). Not yet live-tested end-to-end — see
 `rover_photo_updates_design_addendum_C.md` (Addendum C) §11.**
 Tap-to-assign approach: Malik **taps a dog from the roster** (no name typing), sends that dog's
 photo(s) — **multiple photos per dog** — a caption is **picked from a pre-written pool (NO LLM)**

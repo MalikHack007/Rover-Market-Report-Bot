@@ -71,10 +71,15 @@ def send_photos(file_ids, caption=None):
 
 
 # --- keyboards (callback_data = ph:<action>[:<arg>]) ---------------------
-def roster_keyboard(roster):
-    """One button per dog in custody + a Review button."""
-    rows = [[{"text": f"{e['pet'] or '?'} · {e['owner'] or '?'}",
-              "callback_data": f"ph:pick:{e['thread_key']}"}] for e in roster]
+def roster_keyboard(roster, updated=None):
+    """One button per dog in custody + a Review button. Dogs in `updated` (thread_keys that
+    already got a photo update today, P3) are prefixed with ✅ so Malik sees who's done."""
+    updated = updated or set()
+    rows = []
+    for e in roster:
+        tick = "✅ " if e["thread_key"] in updated else ""
+        rows.append([{"text": f"{tick}{e['pet'] or '?'} · {e['owner'] or '?'}",
+                      "callback_data": f"ph:pick:{e['thread_key']}"}])
     rows.append([{"text": "✅ Review & send", "callback_data": "ph:review"}])
     return {"inline_keyboard": rows}
 
@@ -89,8 +94,13 @@ def review_keyboard(update_id, held=False):
     ]}
 
 
-def sendall_keyboard(n):
-    return {"inline_keyboard": [[{"text": f"✅ Send all ({n})", "callback_data": "ph:sendall"}]]}
+def sendall_keyboard(n, show_capall=False):
+    """The batch summary card's buttons: the single Send-all, plus (when there's more than one
+    dog) a 'same caption for all' shortcut (P3) that applies one pool line to every dog."""
+    rows = [[{"text": f"✅ Send all ({n})", "callback_data": "ph:sendall"}]]
+    if show_capall:
+        rows.append([{"text": "🖊 Same caption for all", "callback_data": "ph:capall"}])
+    return {"inline_keyboard": rows}
 
 
 # --- cards ---------------------------------------------------------------

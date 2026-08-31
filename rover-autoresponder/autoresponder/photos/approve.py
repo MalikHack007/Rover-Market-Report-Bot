@@ -31,6 +31,8 @@ def handle_callback(conn, data, chat_id, message_id, cq_id):
         pipeline.review(conn, chat_id, cq_id)
     elif action == "sendall":
         send_all(conn, chat_id, cq_id)
+    elif action == "capall":
+        same_caption_all(conn, chat_id, cq_id)
     elif action in ("cap", "edit", "more", "hold", "disc"):
         _update_action(conn, chat_id, action, _int(arg), message_id, cq_id)
     else:
@@ -116,6 +118,30 @@ def send_all(conn, chat_id, cq_id=None):
         parts.append(f"{skipped} skipped (daily 50-send cap — left for tomorrow)")
     remaining = config.TELERIVET_DAILY_MSG_CAP - pstore.sends_today(conn)
     ui.send("✅ " + " · ".join(parts) + f". {remaining} sends left today.")
+
+
+def same_caption_all(conn, chat_id, cq_id=None):
+    """P3: apply ONE pool line to every dog-update in the batch (each still personalizes
+    {pet}), and re-render each card. Held/discarded dogs are left alone. Malik can still edit
+    or re-roll any individual caption afterwards; nothing sends — this only sets captions."""
+    batch = pstore.current_batch(conn, chat_id)
+    if not batch:
+        ui.answer(cq_id, "No batch.")
+        return
+    updates = [u for u in pstore.list_batch(conn, batch, statuses=("ready", "collecting"))
+               if pstore.get_media(conn, u[0])]
+    if not updates:
+        ui.answer(cq_id, "No dogs to caption.")
+        return
+    line, idx = captions.pick_line()
+    for u in updates:
+        uid, _b, thread, _ep, pet, _cap, _ci, _st, _tid = u
+        pstore.set_caption(conn, uid, captions.personalize(line, pet), idx)
+        pstore.set_caption_last(conn, thread, idx)
+        mid = pstore.card_message(conn, uid)
+        if mid:
+            pipeline.render_card(conn, uid, mid)
+    ui.answer(cq_id, f"One caption applied to {len(updates)}")
 
 
 def handle_text_reply(conn, text, chat_id, reply_to_message_id):

@@ -97,7 +97,7 @@ def main() -> None:
         threading.Thread(
             target=poll_loop, args=(on_callback,),
             kwargs={"on_text": on_text,
-                    "on_photo": lambda fid, c: photo_pipeline.on_photo(conn, c, fid)},
+                    "on_photo": lambda fid, c, grp=None: photo_pipeline.on_photo(conn, c, fid, grp)},
             daemon=True, name="telegram-poller",
         ).start()
 

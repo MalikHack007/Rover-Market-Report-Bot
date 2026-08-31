@@ -1,6 +1,7 @@
 # Rover Auto-Responder — Design Addendum C: Photo-Update Assistant
 
-**Version:** v0.1 (design)  ·  **Status:** design pass, not yet built  ·  **Date:** 2026-08-28
+**Version:** v0.1 (design)  ·  **Status:** P1–P3 built (2026-08-31); not yet live-tested
+end-to-end (see §11 table + §12)  ·  **Date:** 2026-08-28
 **Depends on:** base design (v0.3), Addendum A (SMS transport & approve-and-send),
 Addendum B (calendar). Read the nested `CLAUDE.md` first — especially the
 **"Outbound MMS / photo updates — policy exception"** section, which this addendum implements.
@@ -394,8 +395,15 @@ untouched.
   flips rows to `delivered`/`failed`, alerts on failure, and tears down R2 objects + local files
   on finalization. (Multi-image-in-one-MMS is verified, so the burst fallback is a defensive-only
   guard, not planned work.)
-- **P3 — polish:** roster niceties (mark who's already gotten an update today); Telegram album
-  intake (group a `media_group_id` under one dog automatically); "same caption to all" option.
+- **P3 — polish (✅ built 2026-08-31):** roster niceties — dogs that already got an update
+  today are prefixed **✅** on the tap keyboard (`store.threads_updated_today`, counts only
+  `sent`/`delivered`); Telegram **album intake** — an album's photos share one
+  `media_group_id`, threaded through `dispatch_update → on_photo`, so the "tap a dog first"
+  nudge and the per-dog "collecting" ack each fire **once per album**, not once per photo
+  (all photos still attach to the active dog); **"same caption for all"** — a summary-card
+  button (shown when >1 dog) picks one pool line and applies it to every dog-update, each
+  still personalizing `{pet}`, re-rendering every card (reverse card map added to
+  `store.link_card`). Tests: `test_photos_p3.py`.
 
 ---
 

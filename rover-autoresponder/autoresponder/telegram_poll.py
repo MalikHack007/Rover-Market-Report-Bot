@@ -22,7 +22,8 @@ def dispatch_update(upd: dict, on_callback, allowed_chat, on_text=None, on_photo
 
     callback_query -> on_callback(data, chat_id, message_id, cq_id)
     message text   -> on_text(text, chat_id, reply_to_message_id)  (SMS edit path / commands)
-    message photo  -> on_photo(file_id, chat_id)                   (Addendum C photo intake)
+    message photo  -> on_photo(file_id, chat_id, media_group_id)   (Addendum C photo intake;
+                      media_group_id groups an album so it's handled once — P3)
     Only traffic from allowed_chat is honored.
     """
     cq = upd.get("callback_query")
@@ -42,9 +43,10 @@ def dispatch_update(upd: dict, on_callback, allowed_chat, on_text=None, on_photo
     if allowed_chat and str(chat_id) != str(allowed_chat):
         log.warning("ignoring message from unexpected chat %s", chat_id)
         return
-    # A photo message (Addendum C): take the largest size Telegram offers.
+    # A photo message (Addendum C): take the largest size Telegram offers. media_group_id is
+    # present when the photo is part of an album (P3), so the intake reacts once per album.
     if m.get("photo") and on_photo:
-        on_photo(m["photo"][-1]["file_id"], chat_id)
+        on_photo(m["photo"][-1]["file_id"], chat_id, m.get("media_group_id"))
         return
     if on_text:
         text = m.get("text")

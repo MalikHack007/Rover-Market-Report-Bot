@@ -35,3 +35,19 @@ def pick(pet_name, pool=None, avoid_index=None):
     idx = random.choice(candidates)
     text = pool[idx].replace("{pet}", pet_name or "your pup")
     return (text, idx)
+
+
+def pick_line(pool=None):
+    """Pick ONE raw pool line + its index, WITHOUT substituting {pet} (P3 'same caption for
+    all'): the caller applies this one line to every dog, personalizing {pet} per dog so each
+    owner still sees their own pup's name."""
+    pool = pool if pool is not None else load_pool()
+    if not pool:
+        return ("{pet} is having a great time!", -1)
+    idx = random.randrange(len(pool))
+    return (pool[idx], idx)
+
+
+def personalize(line, pet_name):
+    """Substitute {pet} in a raw pool line with the dog's name."""
+    return (line or "").replace("{pet}", pet_name or "your pup")

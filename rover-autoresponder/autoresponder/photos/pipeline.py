@@ -24,10 +24,12 @@ def _show_roster(conn, intro=False):
     if not roster:
         ui.send("No dogs are in custody today — no confirmed Rover booking covers today.")
         return
+    updated = pstore.threads_updated_today(conn)          # P3: mark who already got one today
+    legend = "  (✅ = already sent an update today)" if updated else ""
     text = ("📸 <b>Photo updates</b>\nTap a dog, then send their photo(s). Tap the next dog "
-            "for theirs. Hit <b>Review &amp; send</b> when done." if intro
-            else "Tap a dog, then send their photo(s):")
-    ui.send(text, reply_markup=ui.roster_keyboard(roster))
+            "for theirs. Hit <b>Review &amp; send</b> when done." + legend if intro
+            else "Tap a dog, then send their photo(s):" + legend)
+    ui.send(text, reply_markup=ui.roster_keyboard(roster, updated=updated))
 
 
 def set_active_dog(conn, chat_id, thread_key, cq_id=None):
@@ -42,15 +44,27 @@ def set_active_dog(conn, chat_id, thread_key, cq_id=None):
     ui.answer(cq_id, f"Now send {entry['pet']}'s photos 📷")
 
 
-def on_photo(conn, chat_id, file_id):
-    """An incoming photo attaches to the active dog's update (downloaded + staged)."""
+def on_photo(conn, chat_id, file_id, media_group_id=None):
+    """An incoming photo attaches to the active dog's update (downloaded + staged).
+
+    P3 album intake: Telegram delivers each photo of an album as a SEPARATE message sharing
+    one `media_group_id`. They all attach to the still-active dog automatically, but the
+    per-photo prompts/acks would otherwise fire once per photo. So the "tap a dog first"
+    nudge (no active dog) and the first-photo "collecting" ack are each emitted at most ONCE
+    per album — tracked by the last group we reacted to for this chat.
+    """
     batch = pstore.current_batch(conn, chat_id)
     active = pstore.active_dog(conn, chat_id)
     roster = {e["thread_key"]: e for e in pstore.list_active_bookings(conn)}
+    same_group = media_group_id and media_group_id == pstore.last_photo_group(conn, chat_id)
     if not batch or not active or active not in roster:
         pstore.set_active_dog(conn, chat_id, "")
-        ui.send("Tap a dog first, then send their photos:",
-                reply_markup=ui.roster_keyboard(pstore.list_active_bookings(conn)))
+        if not same_group:                       # nudge once per album, not once per photo
+            pstore.set_last_photo_group(conn, chat_id, media_group_id)
+            ui.send("Tap a dog first, then send their photos:",
+                    reply_markup=ui.roster_keyboard(
+                        pstore.list_active_bookings(conn),
+                        updated=pstore.threads_updated_today(conn)))
         return
     entry = roster[active]
     path = ui.download_photo(file_id)
@@ -61,9 +75,11 @@ def on_photo(conn, chat_id, file_id):
     pstore.add_media(conn, uid, file_id, path)
     n = len(pstore.get_media(conn, uid))
     log.info("photo attached | %s (%s) | %d so far", entry["pet"], active, n)
-    if n == 1:   # light ack on the first only, to avoid spamming per photo
+    # Light ack on the FIRST photo of a dog only — and only once per album — to avoid spam.
+    if n == 1 and not same_group:
         ui.send(f"📷 Collecting for <b>{ui.esc(entry['pet'])}</b>… send more, tap another dog, "
                 "or hit Review.")
+    pstore.set_last_photo_group(conn, chat_id, media_group_id)
 
 
 def review(conn, chat_id, cq_id=None):
@@ -85,7 +101,7 @@ def review(conn, chat_id, cq_id=None):
         if not held:
             ready += 1
     ui.send("Review each above, edit if needed, then send everything at once:",
-            reply_markup=ui.sendall_keyboard(ready))
+            reply_markup=ui.sendall_keyboard(ready, show_capall=ready > 1))
 
 
 def render_card(conn, update_id, message_id=None):

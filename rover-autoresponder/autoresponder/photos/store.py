@@ -113,6 +113,22 @@ def list_pending_sent(conn):
             "WHERE status='sent' AND telerivet_msg_id IS NOT NULL").fetchall()
 
 
+def threads_updated_today(conn):
+    """Set of thread_keys that already received a photo update TODAY (P3 roster nicety).
+
+    An update counts once it has actually gone out (`sent`/`delivered`). `updated_at` is
+    SQLite `datetime('now')` (UTC), so we compare against `date('now')` (also UTC) — no
+    Python/SQLite timezone skew. Used to mark the roster so Malik sees at a glance who's
+    already had one today.
+    """
+    with base._LOCK:
+        rows = conn.execute(
+            "SELECT DISTINCT thread_key FROM photo_updates "
+            "WHERE status IN ('sent','delivered') AND substr(updated_at,1,10)=date('now')"
+        ).fetchall()
+    return {r[0] for r in rows}
+
+
 # --- media ---------------------------------------------------------------
 def add_media(conn, update_id, telegram_file_id, local_path):
     """Append a photo to a dog-update (deduped on telegram_file_id). Returns the media id."""
@@ -246,11 +262,30 @@ def active_dog(conn, chat):
     return base.get_meta(conn, f"photo_active:{chat}") or None
 
 
+def set_last_photo_group(conn, chat, group_id):
+    """Remember the last Telegram media_group_id we reacted to for this chat, so that an
+    album (many photos sharing one group) doesn't trigger a repeated prompt/ack per photo
+    (P3 album intake). Empty string clears it."""
+    base.set_meta(conn, f"photo_group:{chat}", group_id or "")
+
+
+def last_photo_group(conn, chat):
+    return base.get_meta(conn, f"photo_group:{chat}") or None
+
+
 # --- card <-> update map (so a reply to a card edits that caption) --------
 def link_card(conn, message_id, update_id):
     base.set_meta(conn, f"photo_card:{message_id}", update_id)
+    base.set_meta(conn, f"photo_card_msg:{update_id}", message_id)   # reverse: update -> card
 
 
 def update_for_card(conn, message_id):
     v = base.get_meta(conn, f"photo_card:{message_id}")
+    return int(v) if v not in (None, "") else None
+
+
+def card_message(conn, update_id):
+    """The Telegram message id of a dog-update's control card (reverse of link_card), so we
+    can re-render every card programmatically — e.g. 'same caption for all' (P3)."""
+    v = base.get_meta(conn, f"photo_card_msg:{update_id}")
     return int(v) if v not in (None, "") else None
