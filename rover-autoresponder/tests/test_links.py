@@ -15,9 +15,21 @@ INQ = ("[ New booking request (boarding) from Jessica: Archie (4 yr, 30 lbs) "
        "09/01/2026 to 09/06/2026. Book @ r.rover.com/x ]")
 
 
+POST_CONF_TEMPLATE = (
+    "Thanks for confirming!\n\n"
+    "To schedule drop off & pickup, please use the following links:\n\n"
+    "Drop-off\n\n{dropoff_link}\n\n"
+    "Pick-up\n\n{pickup_link}\n\n"
+    "Packing list:\n\n- Food\n- leash\n\nMy address:\n\n123 Example St.\n"
+)
+
+
 def _db(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "CALCOM_USERNAME", "malik")
     monkeypatch.setattr(config, "GOOGLE_CALENDAR_ID", "rover@group.calendar.google.com")
+    tmpl = tmp_path / "post_confirmation.md"
+    tmpl.write_text(POST_CONF_TEMPLATE, encoding="utf-8")
+    monkeypatch.setattr(config, "POST_CONFIRMATION_PATH", str(tmpl))
     return store.init_db(str(tmp_path / "c2.db"))
 
 
@@ -77,9 +89,9 @@ def test_scheduling_message_contains_both_links(tmp_path, monkeypatch):
     on_booking_confirmed(conn, A, "Archie", "09/01", "09/06",
                          calendar=FakeCalendar(), today=date(2026, 8, 20))
     text, links = build_scheduling_draft(conn, A)
-    assert "Jessica" in text and "Archie" in text
+    # Links are now folded into the full post-confirmation message.
     assert links[DROPOFF] in text and links[PICKUP] in text
-    assert "Sep 1" in text and "Sep 6" in text          # friendly dates
+    assert "Packing list" in text and "My address" in text
 
 
 def test_send_scheduling_links_arms_approve_and_send(tmp_path, monkeypatch):

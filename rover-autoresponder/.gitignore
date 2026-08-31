@@ -12,6 +12,7 @@ pubsub-sa.json
 # Committed .example versions document the format; copy them and fill in locally.
 autoresponder/playbook.md
 autoresponder/faq.md
+autoresponder/post_confirmation.md
 autoresponder/photos/captions.txt
 token.json*
 credentials.json*

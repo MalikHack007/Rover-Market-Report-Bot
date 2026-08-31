@@ -51,6 +51,10 @@ DEBOUNCE_SECONDS = int(os.environ.get("DEBOUNCE_SECONDS", "45"))  # coalesce a b
 _HERE = os.path.dirname(__file__)
 PLAYBOOK_PATH = os.environ.get("PLAYBOOK_PATH", os.path.join(_HERE, "playbook.md"))
 FAQ_PATH = os.environ.get("FAQ_PATH", os.path.join(_HERE, "faq.md"))  # optional; loaded if present
+# Post-confirmation message (packing list, address, drop-off/pick-up links folded in).
+# Real file is gitignored; a .example documents the format. See scheduling.scheduling_message.
+POST_CONFIRMATION_PATH = os.environ.get(
+    "POST_CONFIRMATION_PATH", os.path.join(_HERE, "post_confirmation.md"))
 
 
 def topic_path() -> str:
@@ -125,15 +129,8 @@ CALCOM_RETRIES = int(os.environ.get("CALCOM_RETRIES", "3"))
 # consecutive failed polls before alerting (5 = ~5 min at the default interval)
 CALCOM_ALERT_AFTER = int(os.environ.get("CALCOM_ALERT_AFTER", "5"))
 
-# The message that carries the scheduling links. Fixed wording (no LLM call needed).
-SCHEDULING_LINKS_TEMPLATE = os.environ.get(
-    "SCHEDULING_LINKS_TEMPLATE",
-    "Hey {owner_name}, just accepted — so excited to have {pet_name}! "
-    "Please pick your times here:\n\n"
-    "Drop-off ({start_date}): {dropoff_link}\n\n"
-    "Pick-up ({end_date}): {pickup_link}\n\n"
-    "Let me know if none of the times work and we'll sort something out!",
-)
+# The scheduling links are folded into the post-confirmation message
+# (POST_CONFIRMATION_PATH) rather than a standalone card — see scheduling.scheduling_message.
 MEETGREET_LINK_TEMPLATE = os.environ.get(
     "MEETGREET_LINK_TEMPLATE",
     "Happy to do a meet and greet! Pick a time that works for you here: {meetgreet_link}",

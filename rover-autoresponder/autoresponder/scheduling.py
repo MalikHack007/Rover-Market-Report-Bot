@@ -266,18 +266,37 @@ def ensure_links(conn, thread_key, episode, owner_name=None):
     return links
 
 
+def _load_post_confirmation_template():
+    """Read the post-confirmation message template, stripping a leading comment block
+    (contiguous run of blank or '#'-prefixed lines) so the .example header never ships."""
+    try:
+        with open(config.POST_CONFIRMATION_PATH, encoding="utf-8") as fh:
+            text = fh.read()
+    except FileNotFoundError:
+        log.error("post-confirmation template missing at %s", config.POST_CONFIRMATION_PATH)
+        return None
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines) and (not lines[i].strip() or lines[i].lstrip().startswith("#")):
+        i += 1
+    return "\n".join(lines[i:]).strip()
+
+
 def scheduling_message(owner_name, pet_name, links, start_date=None, end_date=None):
-    """The fixed message that carries both links (no LLM call — wording is predictable)."""
+    """The post-confirmation message with both booking links folded in (no LLM call).
+
+    Loads POST_CONFIRMATION_PATH and substitutes {dropoff_link}/{pickup_link}. owner_name,
+    pet_name and dates are accepted for signature compatibility but the template no longer
+    references them (kept so callers don't need to change).
+    """
     if DROPOFF not in links or PICKUP not in links:
         return None
-    return config.SCHEDULING_LINKS_TEMPLATE.format(
-        owner_name=owner_name or "there",
-        pet_name=pet_name or "your pup",
-        start_date=_pretty(start_date),
-        end_date=_pretty(end_date),
-        dropoff_link=links[DROPOFF],
-        pickup_link=links[PICKUP],
-    )
+    template = _load_post_confirmation_template()
+    if not template:
+        return None
+    return (template
+            .replace("{dropoff_link}", links[DROPOFF])
+            .replace("{pickup_link}", links[PICKUP]))
 
 
 def _pretty(iso_date):

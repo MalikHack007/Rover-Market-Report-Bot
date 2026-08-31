@@ -1,0 +1,49 @@
+# Post-confirmation message (example)
+#
+# Sent (once, through the Approve-and-send gate) after a booking is confirmed, in place
+# of the old short scheduling-links message. The two Cal.com booking links are folded in
+# via the {dropoff_link} and {pickup_link} placeholders — those are the ONLY placeholders
+# substituted; everything else is sent verbatim. Copy this to post_confirmation.md and
+# fill in your real address/wording (that copy is gitignored).
+#
+# NOTE: the leading comment lines above (starting with '#') are stripped before sending.
+
+Thanks for confirming!
+
+Couple of things I would need from you:
+
+Could you text me here your pup’s feeding schedule (how much & when) and medication schedule (if applicable) for my reference?
+
+To schedule drop off & pickup, please use the following links:
+
+Drop-off
+
+{dropoff_link}
+
+Pick-up
+
+{pickup_link}
+
+If you need to reschedule, you can do so using the confirmation email you got from cal.com. Let me know if none of the times work, we can figure something out!
+
+Packing list:
+
+Please ensure to bring the following:
+
+- Food
+
+- water AND food bowls
+
+- leash
+
+- Portioning container (cup, scoop, etc) that you use specifically to measure your pup’s food, OR pre-portioned food in zip-loc bags
+
+Everything else will be optional. Feel free to bring treats/toys/blankets if you like, or these will be otherwise provided by me.
+
+My address:
+
+123 Example St.
+
+Note for drop off and pickup -
+
+Please avoid knocking on my door as my dog will go crazy lol. Text me your eta when you're on the way and I will meet you in my driveway. If you got here and I am not in my driveway, please shoot me a text and I will come out!
