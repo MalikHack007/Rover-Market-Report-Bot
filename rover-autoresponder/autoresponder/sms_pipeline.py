@@ -87,6 +87,26 @@ def handle_sms(conn, sender: str, body: str, schedule_draft=None):
             log.exception("alert failed")
         return msg
 
+    elif msg.kind == "cancelled":
+        # Addendum B / C4: Rover cancelled the whole booking. It arrives on the booking's own
+        # thread, so the thread_key tells us which one — remove its calendar events + links,
+        # and mark the thread cancelled so the dog drops out of the photo roster / drafting.
+        store.upsert_sms_thread(conn, sender, owner_name=msg.owner_name)
+        store.set_thread_status(conn, sender, "cancelled")
+        log.info("CANCELLED (sms) | %s | owner=%s | %s to %s",
+                 sender, msg.owner_name, msg.start_date, msg.end_date)
+        if config.GOOGLE_CALENDAR_ID:
+            try:
+                from .scheduling import on_booking_cancelled
+                removed = on_booking_cancelled(conn, sender)
+                from . import telegram_notify
+                telegram_notify.send_alert(
+                    f"🚫 Booking CANCELLED — {msg.owner_name or 'a client'} "
+                    f"({msg.start_date} to {msg.end_date}). Removed {removed} calendar "
+                    "event(s); links expired.")
+            except Exception:
+                log.exception("  cancellation handling failed for %s", sender)
+
     elif msg.kind in ("confirmed", "modified"):
         store.upsert_sms_thread(conn, sender, owner_name=msg.owner_name,
                                 pet_name=msg.pet_name, status="converted")
@@ -322,5 +342,31 @@ def send_scheduling_links(conn, number: str) -> bool:
         owner, dates, "SCHEDULING", ["booking confirmed — send the booking links"],
         history, text,
         reply_markup=telegram_notify.build_sms_keyboard(number))
+    store.link_card(conn, mid, number)
+    return True
+
+
+# --- Addendum B / C4: re-issue ONLY the changed leg(s)' link after a modification --------
+def send_modified_links(conn, number: str, kinds) -> bool:
+    """Draft a links message for just the moved legs (e.g. only pick-up) and push it for
+    approval. Unlike send_scheduling_links this is NOT deduped (a modification should always
+    re-issue) and it never re-sends an unchanged leg's link (which could double-book)."""
+    from . import telegram_notify
+    from .scheduling import build_leg_links_message
+
+    text, links = build_leg_links_message(conn, number, kinds)
+    if not text:
+        log.warning("  no links to re-issue for %s (kinds=%s)", number, list(kinds))
+        return False
+    row = store.get_thread(conn, number)
+    owner, pet, dates = (row[0], row[1], row[2]) if row else (None, None, None)
+    store.set_pending_text(conn, number, text)
+    store.set_last_draft(conn, number, text)
+    history = store.get_conversation(conn, number)
+    log.info("  MODIFIED LINKS (%s) drafted for %s\n----- draft -----\n%s\n---------------",
+             list(links), number, text)
+    mid = telegram_notify.send_draft_card(
+        owner, dates, "SCHEDULING", [f"booking modified — re-issue {', '.join(links)} link(s)"],
+        history, text, reply_markup=telegram_notify.build_sms_keyboard(number))
     store.link_card(conn, mid, number)
     return True

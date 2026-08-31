@@ -22,7 +22,7 @@ from datetime import datetime
 from . import store
 from .scheduling import (
     CANCELLED, CONFIRMED, DROPOFF, MEET_GREET, PICKUP, build_link, default_slot,
-    on_booking_confirmed, ensure_links, title, PENDING,
+    on_booking_confirmed, ensure_links, title, PENDING, apply_date_change,
 )
 
 log = logging.getLogger(__name__)
@@ -177,40 +177,14 @@ def cmd_movebooking(conn, args, calendar=None):
     from .calendar_client import GoogleCalendar
     calendar = calendar or GoogleCalendar()
     t = store.get_thread(conn, thread_key)
-    pet, owner = (t[1], t[0]) if t else (None, None)
+    pet, owner = (t[1] or thread_key, t[0]) if t else (thread_key, None)
 
-    moved, kept, invalidated = [], [], []
-    for r in store.list_scheduling_events(conn, thread_key=thread_key):
-        ev_id, _tk, _ep, kind, _src, status, target, sched, gcal_id, _link = r
-        if status == CANCELLED:
-            continue
-        day = start_day if kind == DROPOFF else end_day
-        if target == day.isoformat():
-            kept.append((kind, status, sched))       # unchanged — do not disturb
-            continue
-
-        start_iso, end_iso = default_slot(day, kind)
-        if gcal_id:
-            calendar.update_event(gcal_id, summary=title(pet, kind, PENDING),
-                                  start_iso=start_iso, end_iso=end_iso)
-        if status == CONFIRMED and sched:
-            # Their chosen time was on the OLD date, so it no longer applies. Stop the
-            # poller re-confirming it from the still-live cal.com booking.
-            # NOTE: list_scheduling_events() doesn't include booking_ref, so read the
-            # full row rather than indexing into the abbreviated one.
-            full = store.get_scheduling_event_by_id(conn, ev_id)
-            store.ignore_calcom_booking(conn, full[9] if full else None)
-            invalidated.append((kind, sched))
-        new_link = build_link(kind, day.isoformat(), owner, ref=ev_id)
-        store.update_scheduling_event(conn, ev_id, target_date=day.isoformat(),
-                                      status=PENDING, scheduled_at=None,
-                                      booking_ref=None, link_url=new_link)
-        moved.append(kind)
-
-    store.upsert_sms_thread(conn, thread_key,
-                            stay_dates=f"{start_day} to {end_day}")
+    # Shared with the Rover-modification path (C4): move only the legs whose date changed,
+    # revert a confirmed-but-now-invalid leg to PENDING, re-mint links.
+    res = apply_date_change(conn, thread_key, start_day, end_day, calendar=calendar)
+    moved, kept, invalidated = res["moved"], res["kept"], res["invalidated"]
     if not moved:
-        return (f"{pet or thread_key} is already {start_day:%a, %b %d} → "
+        return (f"{pet} is already {start_day:%a, %b %d} → "
                 f"{end_day:%a, %b %d}. Nothing changed.")
 
     links = ensure_links(conn, thread_key, store.get_episode(conn, thread_key), owner)

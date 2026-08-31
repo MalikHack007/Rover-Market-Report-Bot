@@ -48,6 +48,12 @@ CONFIRMED_SINGLE_RE = re.compile(
 )
 MODIFIED_RE = re.compile(
     r"Your upcoming booking with\s+(.+?)\s+has been modified", re.IGNORECASE)
+# Cancellation (C4): "Rover Update: Your booking from 08/15/2026 to 08/18/2026 with Joshua K.
+# has been cancelled." Carries the old dates + owner, and arrives on the booking's own thread,
+# so the thread_key alone tells us which booking to cancel.
+CANCELLED_RE = re.compile(
+    r"Your booking from\s+(\d{1,2}/\d{1,2}/\d{2,4})\s+to\s+(\d{1,2}/\d{1,2}/\d{2,4})\s+"
+    r"with\s+(.+?)\s+has been cancelled", re.IGNORECASE)
 # Pay-first flow: the client has paid and is waiting on YOU to accept. No reply is
 # wanted here — it's an action item. Accepting produces only a confirmation EMAIL
 # (no confirmation SMS), which confirmation_email.py handles.
@@ -69,7 +75,7 @@ PET_NAME_RE = re.compile(r"^\s*([^(]+?)\s*(?:\(|$)")
 class SmsMessage:
     sender: str                      # conversation number == thread key
     text: str                        # body as received (marker text included)
-    kind: str = "message"            # inquiry | confirmed | modified | message
+    kind: str = "message"            # inquiry | confirmed | modified | cancelled | message
     service: Optional[str] = None    # boarding, stay, day care...
     owner_name: Optional[str] = None
     pet_name: Optional[str] = None
@@ -110,6 +116,13 @@ def parse_sms(sender: str, body: str) -> SmsMessage:
     if m:
         msg.kind = "modified"
         msg.owner_name = m.group(1).strip()
+        return msg
+
+    m = CANCELLED_RE.search(scan)
+    if m:
+        msg.kind = "cancelled"
+        msg.start_date, msg.end_date = m.group(1), m.group(2)
+        msg.owner_name = m.group(3).strip()
         return msg
 
     m = CONFIRMED_RE.search(scan)

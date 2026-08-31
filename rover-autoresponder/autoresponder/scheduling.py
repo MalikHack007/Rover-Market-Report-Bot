@@ -146,6 +146,75 @@ def on_booking_confirmed(conn, thread_key, pet_name, start_text, end_text,
     return created
 
 
+# --- Addendum B / C4: booking cancellation & modification -----------------
+def on_booking_cancelled(conn, thread_key, calendar=None, episode=None):
+    """Rover cancelled the whole booking -> delete the drop-off/pick-up calendar events for
+    this episode, mark them cancelled, neutralize any live Cal.com booking (so the poller
+    doesn't re-confirm), and expire the scheduling links. Returns how many legs were removed.
+    """
+    episode = episode if episode is not None else store.get_episode(conn, thread_key)
+    calendar = calendar or GoogleCalendar()
+    removed = 0
+    for r in store.list_scheduling_events(conn, thread_key=thread_key):
+        ev_id, _tk, ep, kind, _src, status, _target, _sched, gcal_id, _link = r
+        if ep != episode or status == CANCELLED:
+            continue
+        full = store.get_scheduling_event_by_id(conn, ev_id)      # full row carries booking_ref
+        booking_ref = full[9] if full else None
+        if booking_ref:
+            store.ignore_calcom_booking(conn, booking_ref)        # stop the poller re-confirming
+        if gcal_id:
+            calendar.delete_event(gcal_id)
+        store.update_scheduling_event(conn, ev_id, status=CANCELLED, gcal_event_id=None,
+                                      booking_ref=None, scheduled_at=None)
+        removed += 1
+    store.del_meta(conn, f"links_sent:{thread_key}:{episode}")    # expire links
+    log.info("cancelled booking for %s (episode %d): removed %d event(s)",
+             thread_key, episode, removed)
+    return removed
+
+
+def apply_date_change(conn, thread_key, start_day, end_day, calendar=None, episode=None):
+    """Move a booking's drop-off/pick-up legs to new dates (a Rover modification, or the
+    /movebooking command). Only legs whose date ACTUALLY changed are touched, so an already-
+    confirmed leg on an unchanged date keeps its booked time. A confirmed leg whose date DID
+    change is reverted to PENDING (its old time is no longer valid) and its Cal.com booking is
+    neutralized. Returns {moved, kept, invalidated, start, end}.
+    """
+    episode = episode if episode is not None else store.get_episode(conn, thread_key)
+    calendar = calendar or GoogleCalendar()
+    t = store.get_thread(conn, thread_key)
+    pet, owner = (t[1], t[0]) if t else (None, None)
+
+    moved, kept, invalidated = [], [], []
+    for r in store.list_scheduling_events(conn, thread_key=thread_key):
+        ev_id, _tk, ep, kind, _src, status, target, sched, gcal_id, _link = r
+        if ep != episode or status == CANCELLED or kind == MEET_GREET:
+            continue
+        day = start_day if kind == DROPOFF else end_day
+        if not day:
+            continue
+        if target == day.isoformat():
+            kept.append((kind, status, sched))            # unchanged leg — do not disturb
+            continue
+        start_iso, end_iso = default_slot(day, kind)
+        if gcal_id:
+            calendar.update_event(gcal_id, summary=title(pet, kind, PENDING),
+                                  start_iso=start_iso, end_iso=end_iso,
+                                  transparency=TRANSPARENT)
+        if status == CONFIRMED and sched:
+            full = store.get_scheduling_event_by_id(conn, ev_id)
+            store.ignore_calcom_booking(conn, full[9] if full else None)
+            invalidated.append((kind, sched))
+        new_link = build_link(kind, day.isoformat(), owner, ref=ev_id)
+        store.update_scheduling_event(conn, ev_id, target_date=day.isoformat(), status=PENDING,
+                                      scheduled_at=None, booking_ref=None, link_url=new_link)
+        moved.append(kind)
+    store.upsert_sms_thread(conn, thread_key, stay_dates=f"{start_day} to {end_day}")
+    return {"moved": moved, "kept": kept, "invalidated": invalidated,
+            "start": start_day, "end": end_day}
+
+
 # --- Addendum B / C2: scheduling links -----------------------------------
 def _slug(kind):
     return {DROPOFF: config.CALCOM_EVENT_DROPOFF,
@@ -238,6 +307,30 @@ def build_scheduling_draft(conn, thread_key, calendar=None):
                               d_row[2] if d_row else None,
                               p_row[2] if p_row else None)
     return text, links
+
+
+def build_leg_links_message(conn, thread_key, kinds, calendar=None):
+    """Compose a message re-issuing links for ONLY the given legs (C4 modification).
+
+    When a booking is modified but only one date changed, only that leg's link should go
+    out — re-sending an unchanged (possibly already-booked) leg's link risks a double
+    booking. Returns (text, links_for_those_legs) or (None, {}).
+    """
+    episode = store.get_episode(conn, thread_key)
+    row = store.get_thread(conn, thread_key)
+    owner, pet = (row[0], row[1]) if row else (None, None)
+    all_links = ensure_links(conn, thread_key, episode, owner_name=owner)
+    wanted = [k for k in (DROPOFF, PICKUP) if k in kinds and k in all_links]
+    if not wanted:
+        return None, {}
+    lines = [f"Hi {owner or 'there'}, {pet or 'your pup'}'s dates changed — please pick a new "
+             f"{'time' if len(wanted) == 1 else 'time for each'}:"]
+    for k in wanted:
+        row_k = store.get_scheduling_event(conn, thread_key, episode, k)
+        when = _pretty(row_k[2]) if row_k else ""
+        lines.append(f"\n{_LABEL.get(k, k)} ({when}): {all_links[k]}")
+    lines.append("\nLet me know if none of the times work and we'll sort something out!")
+    return "\n".join(lines), {k: all_links[k] for k in wanted}
 
 
 def ensure_meetgreet_link(conn, thread_key, owner_name=None, pet_name=None,

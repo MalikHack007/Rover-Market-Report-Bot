@@ -62,6 +62,14 @@ def dispatch(conn, pm, schedule_draft, body_text=None) -> None:
                 return
         except Exception:
             log.exception("confirmation-email handling failed")
+        # Addendum B / C4: the "revised itinerary" email carries a booking's NEW dates.
+        try:
+            from .modification_email import handle_modification_email
+            if handle_modification_email(conn, pm.raw_subject,
+                                         body_text or pm.message_text):
+                return
+        except Exception:
+            log.exception("modification-email handling failed")
 
     if pm.kind == "inquiry":
         log.info(

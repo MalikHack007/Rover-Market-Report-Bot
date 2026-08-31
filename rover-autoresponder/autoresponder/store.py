@@ -165,6 +165,12 @@ def set_meta(conn: sqlite3.Connection, key: str, value) -> None:
             )
 
 
+def del_meta(conn: sqlite3.Connection, key: str) -> None:
+    """Remove a meta key (e.g. expire a links-sent dedup so links can be re-issued)."""
+    with _LOCK, conn:
+        conn.execute("DELETE FROM meta WHERE key=?", (key,))
+
+
 # --- Phase 2: thread state for the drafter ---
 def get_thread(conn: sqlite3.Connection, thread_key: str):
     """Return (owner_name, pet_name, stay_dates, stage, status) or None."""

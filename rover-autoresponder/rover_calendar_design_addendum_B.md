@@ -1,9 +1,20 @@
 # Design Addendum B — Calendar & scheduling integration
 
-**Status:** v0.6 (C1–C3 built; C4–C6 pending)
+**Status:** v0.7 (C1–C5 built; C6 48h-reminders pending)
 **Extends:** `rover_autoresponder_design.md` (v0.3) + Addendum A (SMS transport)
 **Owner:** Malik
-**Last updated:** 2026-08-20
+**Last updated:** 2026-08-31
+
+**Changelog v0.6 → v0.7:** **C4 built (modification + cancellation).** Cancellation is
+SMS-driven (`sms_parser.CANCELLED_RE` → `sms_pipeline` `kind='cancelled'` →
+`scheduling.on_booking_cancelled`: delete the episode's calendar events, neutralize any live
+Cal.com booking, expire links). Modification is email-driven (`modification_email.py` parses
+the "revised itinerary" email — pet from subject, owner from body, new dates from the same
+`Dates:` format as the confirmation email — correlates by **owner+pet among current OR upcoming
+bookings** (`end >= today`; ambiguous/zero → alert, never guess), then `scheduling.apply_date_change`
+moves the legs and re-issues links; a confirmed-but-now-invalid leg reverts to PENDING + alert.
+`apply_date_change` is shared with `/movebooking`. Real samples: `samples/canceled.txt`,
+`samples/revised_itinerary.txt`.
 
 **Changelog v0.5 → v0.6:** **Decision 4 reversed on evidence.** A real test booking showed
 Cal.com's API exposes **no Google Calendar event id** (no `references` field; API v1, which

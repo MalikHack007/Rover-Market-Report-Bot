@@ -334,12 +334,17 @@ Gmail OAuth token path, `PUBSUB_SUBSCRIPTION`, Cal.com API key, `EMAIL_MODE`, `C
 
 - Base brain + SMS transport + email fallback: **built** (drafter, sms_*, truncation, gmail/
   pubsub, tests incl. `test_phase5`, `test_email_fallback`).
-- Calendar: **C4 (modification/cancellation) and C5 (private bookings) are built** — the full
-  private-booking command set (`commands.py`, `test_commands.py`), the SMS `modified` marker
-  (`sms_parser.py`), and Cal.com reschedule/cancel reconciliation (`calcom_poller.py`) all
-  exist. **C6 (48h reminders) is not built** — addendum B lists it pending and there is no
-  reminder code anywhere in `autoresponder/` (no scheduler, no `remind`/`48h` path). Don't
-  assume reminders fire.
+- Calendar: **C1–C5 built.** C5 = private-booking commands (`commands.py`). **C4
+  (modification/cancellation) built 2026-08-31** — cancellation is SMS-driven
+  (`sms_parser.CANCELLED_RE` → `sms_pipeline` `kind='cancelled'` →
+  `scheduling.on_booking_cancelled`); modification is email-driven (`modification_email.py` →
+  `scheduling.apply_date_change`, correlating owner+pet among **current OR upcoming** bookings).
+  Tests: `test_c4.py`. **NOTE the earlier drift this corrects:** C4 was *not* the same as
+  `calcom_poller`'s reschedule/cancel — that's **C3** (client changes their *slot time* on
+  Cal.com), whereas C4 is Rover cancelling/modifying the whole *booking*. C4 spans **both
+  services** (cancellation in `rover-sms`, modification in `rover-email-fallback`) — restart
+  both after changes. **C6 (48h reminders) still not built** — no scheduler/`remind` path
+  anywhere; don't assume reminders fire.
 - `rover_autoresponder.db.bootalert` is **not a DB copy** — it's the boot-failure-alert
   throttle stamp written by `main._boot_alert_allowed` (one float timestamp; mutes repeat
   crash alerts for `BOOT_ALERT_INTERVAL_SEC`). It is a runtime-state file and belongs out of
