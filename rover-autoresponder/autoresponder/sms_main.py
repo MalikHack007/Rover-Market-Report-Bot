@@ -69,6 +69,12 @@ def main() -> None:
             threading.Thread(target=calcom_poll_loop, args=(conn,),
                              daemon=True, name="calcom-poller").start()
 
+        # Addendum C / P2: batched delivery-status poller for photo updates. Makes zero API
+        # calls when idle; polls Telerivet only while a sent batch is still settling.
+        from .photos.poller import poll_loop as photo_poll_loop
+        threading.Thread(target=photo_poll_loop, args=(conn,),
+                         daemon=True, name="photo-poller").start()
+
         # Addendum C: the photo-update feature shares this one Telegram poller. Callbacks are
         # routed by prefix (`ph:*` -> photos, else SMS); text tries photos first (it owns
         # `/photos` and photo-card caption edits) then falls back to the SMS handler; and photo

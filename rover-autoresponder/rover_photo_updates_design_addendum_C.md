@@ -122,8 +122,10 @@ The set of valid targets is derived, not maintained by hand. A dog is **in custo
 its **Rover** booking's stay covers the current date:
 
 - `status = 'converted'` **and** `has_booked = 1` (Rover bookings only);
-- **and** `stay_dates` brackets today (drop-off ≤ today ≤ pick-up), with a small grace window
-  on each end for same-day drop-off/pick-up.
+- **and** `stay_dates` brackets today, **inclusive**: `drop-off ≤ today ≤ pick-up`. Inclusive
+  bounds already cover a same-day drop-off (start == today) and same-day pick-up (end == today);
+  **no extra grace window** — a ±1-day margin wrongly pulled in stays that start tomorrow or
+  ended yesterday.
 
 **Private bookings are excluded** — Malik handles those photo updates himself from his personal
 number for now (revisit later; §16). All Rover bookings already live in the database, so the
@@ -367,13 +369,13 @@ existing shared files (the store-init hook and the Telegram photo dispatch).
 | Telerivet send + batched status query | `photos/telerivet.py` (from `telerivet_poc.py`) | ✅ built |
 | Caption **pick** from pool + `{pet}` (no LLM) | `photos/captions.py` (+ `photos/captions.txt`) | ✅ built |
 | `photo_updates` / `photo_update_media` schema + CRUD + roster + budget/session meta | `photos/store.py` (shared conn+lock; hooked into `store.init_db`) | ✅ built |
-| Roster of dogs in custody (**Rover only**) | `photos/store.list_active_bookings()` (parses `stay_dates`, ±1-day grace) | ✅ built |
+| Roster of dogs in custody (**Rover only**) | `photos/store.list_active_bookings()` (parses `stay_dates`, inclusive `start ≤ today ≤ end`, no grace) | ✅ built |
 | Telegram rendering (`ph:*` callbacks, keyboards, cards), **photo preview** (`sendPhoto`/`sendMediaGroup` by file_id) + `getFile` download | `photos/telegram.py` (reuses `telegram_notify` primitives) | ✅ built |
 | Tap-to-assign (active dog), multi-photo accumulate, re-assign, review cards | `photos/pipeline.py` | ✅ built |
 | Callback router, caption edit/re-roll, **batch Send-all**, 50/day budget guardrail | `photos/approve.py` (mirrors `sms_approve.py`) | ✅ built |
 | Photo intake + callback/text routing (`ph:*` → photos, else SMS) | `telegram_poll.py` (+`on_photo`) and `sms_main.py` (routing) | ✅ built |
-| Batched delivery-status poller | `photos/poller.py` (thread in `rover-sms`) | ⏳ P2 |
-| Eager R2 teardown after `delivered` | `photos/poller.py` / `hosting.delete()` | ⏳ P2 |
+| Batched delivery-status poller (poll-only-while-pending, give-up window, reserved budget) | `photos/poller.py` (thread in `rover-sms`) | ✅ built (P2) |
+| Eager R2 teardown + local-file cleanup after `delivered`/`failed`/give-up | `photos/poller.py` `_teardown()` / `hosting.delete()` | ✅ built (P2) |
 
 **Service placement:** everything runs inside **`rover-sms.service`**, which already owns the
 single Telegram poller and the Telerivet-adjacent background workers. No new systemd unit; the
@@ -384,12 +386,14 @@ untouched.
 
 ## 12. Phasing
 
-- **P1 — core loop:** tap-to-assign roster → **accumulate multiple photos per dog** → pool
-  caption (pick + `{pet}`) → per-dog review cards → **one Send-all** → R2 upload each photo →
-  **one MMS per dog** with all its media. Daily-send + monthly-data budget guard.
-- **P2 — delivery confirmation:** Telerivet status poller + failure alerts; eager R2 teardown
-  on `delivered`. (Multi-image-in-one-MMS is already verified, so the burst fallback is a
-  defensive-only guard, not planned work — add it only if a large combined MMS is ever rejected.)
+- **P1 — core loop (✅ built):** tap-to-assign roster → **accumulate multiple photos per dog** →
+  pool caption (pick + `{pet}`) → per-dog review cards with photo preview → **one Send-all** →
+  R2 upload each photo → **one MMS per dog** with all its media. Daily-send budget guard.
+- **P2 — delivery confirmation (✅ built):** batched Telerivet status poller
+  (`photos/poller.py`) — poll-only-while-pending, adaptive give-up window, reserved API budget;
+  flips rows to `delivered`/`failed`, alerts on failure, and tears down R2 objects + local files
+  on finalization. (Multi-image-in-one-MMS is verified, so the burst fallback is a defensive-only
+  guard, not planned work.)
 - **P3 — polish:** roster niceties (mark who's already gotten an update today); Telegram album
   intake (group a `media_group_id` under one dog automatically); "same caption to all" option.
 

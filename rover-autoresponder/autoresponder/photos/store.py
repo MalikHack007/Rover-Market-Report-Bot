@@ -105,10 +105,11 @@ def list_batch(conn, batch_id, statuses=None):
 
 
 def list_pending_sent(conn):
-    """Sent-but-not-terminal updates (for the batched delivery-status poller)."""
+    """Sent-but-not-terminal updates (for the batched delivery-status poller):
+    (id, telerivet_msg_id, updated_at)."""
     with base._LOCK:
         return conn.execute(
-            "SELECT id, telerivet_msg_id FROM photo_updates "
+            "SELECT id, telerivet_msg_id, updated_at FROM photo_updates "
             "WHERE status='sent' AND telerivet_msg_id IS NOT NULL").fetchall()
 
 
@@ -165,9 +166,14 @@ def _parse_stay(stay_dates):
 
 
 def list_active_bookings(conn, today=None):
-    """Confirmed Rover bookings whose stay covers today (±1 day grace). Each entry:
-    {thread_key, owner, pet, episode, stay_dates}."""
-    from datetime import date, timedelta
+    """Confirmed Rover bookings whose stay covers today. Each entry:
+    {thread_key, owner, pet, episode, stay_dates}.
+
+    The bounds are INCLUSIVE (`start <= today <= end`), which already covers a same-day
+    drop-off (start == today) and a same-day pick-up (end == today). No grace beyond that —
+    an extra ±1-day window wrongly pulled in stays that start tomorrow or ended yesterday.
+    """
+    from datetime import date
     today = today or date.today()
     with base._LOCK:
         rows = conn.execute(
@@ -176,7 +182,7 @@ def list_active_bookings(conn, today=None):
     out = []
     for thread_key, owner, pet, stay_dates, episode in rows:
         start, end = _parse_stay(stay_dates)
-        if start and end and (start - timedelta(days=1)) <= today <= (end + timedelta(days=1)):
+        if start and end and start <= today <= end:
             out.append({"thread_key": thread_key, "owner": owner, "pet": pet,
                         "episode": episode or 1, "stay_dates": stay_dates})
     out.sort(key=lambda e: (e["pet"] or "", e["owner"] or ""))

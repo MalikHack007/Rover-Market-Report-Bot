@@ -16,6 +16,10 @@ TELERIVET_DAILY_API_CAP = int(os.environ.get("TELERIVET_DAILY_API_CAP", "200"))
 # Poll calls stop once they'd cross this, leaving the rest of the API cap reserved for sends
 # (so sends always win the budget and 200/day is never hit). 140 reserves ~60 for sends.
 TELERIVET_DAILY_POLL_BUDGET = int(os.environ.get("TELERIVET_DAILY_POLL_BUDGET", "140"))
+# Delivery-status poller (P2): how often to poll while a batch is settling, and when to stop
+# chasing a straggler (MMS receipts are flaky) and mark it "sent (unconfirmed)".
+PHOTO_POLL_INTERVAL_SEC = int(os.environ.get("PHOTO_POLL_INTERVAL_SEC", "60"))
+PHOTO_GIVE_UP_MINUTES = int(os.environ.get("PHOTO_GIVE_UP_MINUTES", "30"))
 
 # --- Cloudflare R2 (media hosting) ---
 R2_ACCOUNT_ID = os.environ.get("R2_ACCOUNT_ID", "")
