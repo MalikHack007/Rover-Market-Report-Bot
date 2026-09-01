@@ -163,6 +163,10 @@ correctness-critical, especially for calendar dates.
   ad-hoc questions.
 - `debounce.py` — coalesces multi-text openers (stragglers like "I forgot to add my kitten").
 - `store.py` / `models.py` — SQLite state store + schema.
+- `dates.py` — **shared date parsing/formatting** (email dates, SMS booking dates, stored
+  `stay_dates`, command args, friendly formatting). One home for helpers that used to be
+  copy-pasted across `scheduling`, the email parsers, `commands`, and `photos.store`; stdlib
+  only, so anything may import it without an import cycle.
 
 **Email side (now fallback)**
 - `gmail_client.py`, `pubsub_listener.py`, `watch_renew.py` — Gmail read, Pub/Sub push,

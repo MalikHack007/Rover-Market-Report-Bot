@@ -16,9 +16,8 @@ which are authoritative over the SMS marker's bare MM/DD.
 """
 import logging
 import re
-from datetime import datetime
 
-from . import store
+from . import store, dates
 
 log = logging.getLogger(__name__)
 
@@ -58,15 +57,6 @@ def normalize_phone(raw):
     return "+" + digits if digits else None
 
 
-def _date(text):
-    for fmt in ("%b %d, %Y", "%B %d, %Y"):
-        try:
-            return datetime.strptime(text.strip(), fmt).date()
-        except ValueError:
-            continue
-    return None
-
-
 def parse_confirmation_email(subject, body):
     """Return the booking's details, or None if this isn't a confirmation email."""
     m = SUBJECT_RE.search(subject or "")
@@ -89,8 +79,8 @@ def parse_confirmation_email(subject, body):
         "pet_name": (pets.group(1).strip() if pets else pet.strip()),
         "owner_name": owner.group(1).strip() if owner else None,
         "phone": normalize_phone(phone.group(1) if phone else None),
-        "start_date": _date(start_text),
-        "end_date": _date(end_text),
+        "start_date": dates.parse_email_date(start_text),
+        "end_date": dates.parse_email_date(end_text),
     }
 
 

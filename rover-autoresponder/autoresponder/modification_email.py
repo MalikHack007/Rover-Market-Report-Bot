@@ -14,9 +14,9 @@ or zero → alert, never guess) and move the calendar legs to the new dates + re
 """
 import logging
 import re
-from datetime import date, datetime
+from datetime import date
 
-from . import store
+from . import store, dates
 
 log = logging.getLogger(__name__)
 
@@ -31,38 +31,10 @@ DATES_RE = re.compile(
     re.IGNORECASE)
 
 
-def _date(text):
-    for fmt in ("%b %d, %Y", "%B %d, %Y"):
-        try:
-            return datetime.strptime(text.strip(), fmt).date()
-        except ValueError:
-            continue
-    return None
-
-
 def _first(name):
     """'Dominique W.' / 'Rusty & Osha' -> a normalized first token for matching."""
     parts = re.split(r"\s+", (name or "").strip())
     return re.sub(r"[^a-z]", "", parts[0].lower()) if parts and parts[0] else ""
-
-
-def _parse_stay(stay_dates):
-    from datetime import datetime as _dt
-    if not stay_dates:
-        return None, None
-    out = []
-    for tok in [p.strip() for p in str(stay_dates).split(" to ")][:2]:
-        d = None
-        for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d"):
-            try:
-                d = _dt.strptime(tok, fmt).date()
-                break
-            except ValueError:
-                continue
-        out.append(d)
-    start = out[0] if out else None
-    end = (out[1] if len(out) > 1 else None) or start
-    return start, end
 
 
 def parse_modification_email(subject, body):
@@ -78,8 +50,8 @@ def parse_modification_email(subject, body):
     return {
         "pet_name": m.group(1).strip().rstrip("."),
         "owner_name": owner.group(1).strip() if owner else None,
-        "start_date": _date(md.group(1)),
-        "end_date": _date(md.group(2) or md.group(1)),
+        "start_date": dates.parse_email_date(md.group(1)),
+        "end_date": dates.parse_email_date(md.group(2) or md.group(1)),
     }
 
 
@@ -101,7 +73,7 @@ def _find_booking(conn, owner, pet, today=None):
     matches = []
     for tk, ow, pn, stay in rows:
         if _first(ow) == o and _first(pn) == p:
-            _start, end = _parse_stay(stay)
+            _start, end = dates.parse_stay(stay, today=today)
             if end and end >= today:      # current (in progress) OR upcoming — not yet ended
                 matches.append(tk)
     if len(matches) == 1:
