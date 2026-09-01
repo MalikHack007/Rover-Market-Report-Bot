@@ -121,6 +121,35 @@ def create_pending_event(conn, thread_key, episode, kind, pet_name, target_day,
     return event_id
 
 
+def stay_conflicts(conn, thread_key, episode, start_day, end_day):
+    """True if the current episode ALREADY owns drop-off/pick-up events that belong to a
+    DIFFERENT booking than (start_day, end_day) — meaning this confirmation is a second,
+    overlapping booking on the same Rover number and must NOT reuse this episode.
+
+    A leg conflicts if it is CANCELLED (a prior cancelled booking still holds the unique
+    (thread, episode, kind) row, which would silently block a re-claim) or if its target date
+    doesn't match the newly-confirmed stay. Returns False on a fresh episode (no events yet)
+    and on the normal SMS-marker + confirmation-email double-fire for the SAME dates.
+    """
+    want = {d.isoformat() for d in (start_day, end_day) if d}
+    rows = [r for r in (store.get_scheduling_event(conn, thread_key, episode, k)
+                        for k in (DROPOFF, PICKUP)) if r]
+    if not rows:
+        return False
+    for _id, status, target, _sched, _gcal, _link in rows:
+        if status == CANCELLED:
+            return True
+        if want and target and target not in want:
+            return True
+    return False
+
+
+def _stay_str(start_day, end_day):
+    if start_day and end_day and end_day != start_day:
+        return f"{start_day.isoformat()} to {end_day.isoformat()}"
+    return start_day.isoformat() if start_day else None
+
+
 def on_booking_confirmed(conn, thread_key, pet_name, start_text, end_text,
                          source="rover", calendar=None, today=None):
     """Booking confirmed -> place drop-off and pick-up placeholders.
@@ -133,6 +162,16 @@ def on_booking_confirmed(conn, thread_key, pet_name, start_text, end_text,
     end_day = parse_booking_date(end_text, today=today) or start_day
     if start_day and end_day and end_day < start_day:
         end_day = start_day               # defensive: never place a pick-up before drop-off
+
+    # A second, overlapping booking on the same Rover number (confirmed out of order) would
+    # otherwise collide with the prior booking's events + links-sent flag on the current
+    # episode — silently placing no events and sending no links. Give it its own episode.
+    # send_scheduling_links (called by our callers right after) then reads the bumped episode.
+    if stay_conflicts(conn, thread_key, episode, start_day, end_day):
+        episode = store.start_new_booking_episode(
+            conn, thread_key, from_episode=episode, stay_dates=_stay_str(start_day, end_day))
+        log.info("second booking on an occupied episode -> episode %d for %s (%s to %s)",
+                 episode, thread_key, start_day, end_day)
 
     created = []
     for kind, day in ((DROPOFF, start_day), (PICKUP, end_day)):

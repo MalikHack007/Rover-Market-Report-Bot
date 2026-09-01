@@ -473,6 +473,34 @@ def start_new_episode(conn: sqlite3.Connection, number: str, owner_name=None,
         return new_ep
 
 
+def start_new_booking_episode(conn: sqlite3.Connection, number: str, from_episode: int,
+                              stay_dates=None) -> int:
+    """Bump the episode for a SECOND booking on the same Rover number.
+
+    Unlike start_new_episode (a fresh *inquiry*, which reactivates the thread and resets the
+    screening stage), this is for a *confirmation* whose stay differs from the current
+    episode's scheduling events — a client with two overlapping bookings on one number,
+    confirmed out of order (e.g. a day-care booked+confirmed while an earlier boarding inquiry
+    was still open). The new stay needs its own episode so it doesn't collide with the prior
+    booking's events + links-sent flag; the thread stays 'converted'/has_booked and the
+    screening stage is left alone.
+
+    RACE-SAFE (compare-and-swap): the SMS marker (rover-sms) and confirmation email
+    (rover-email-fallback) fire ~1s apart in different processes. The bump only lands if the
+    episode is STILL `from_episode`; if the other process already bumped, this is a no-op and
+    we return the already-bumped episode — so two concurrent confirms of the SAME booking
+    advance the episode exactly once, never twice. The stale link draft is cleared so the old
+    episode's links card can't be re-approved for the new stay.
+    """
+    with _LOCK, conn:
+        conn.execute(
+            "UPDATE threads SET episode=episode+1, pending_text=NULL, last_draft_text=NULL, "
+            "send_status=NULL, stay_dates=COALESCE(?, stay_dates), updated_at=datetime('now') "
+            "WHERE thread_key=? AND episode=?", (stay_dates, number, from_episode))
+        row = conn.execute("SELECT episode FROM threads WHERE thread_key=?", (number,)).fetchone()
+        return int(row[0]) if row and row[0] else from_episode
+
+
 def promote_recent_to_episode(conn: sqlite3.Connection, number: str, episode: int,
                               window_minutes: int = 15) -> int:
     """Pull just-arrived, pre-marker messages into the new episode.

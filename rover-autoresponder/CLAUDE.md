@@ -327,6 +327,18 @@ Gmail OAuth token path, `PUBSUB_SUBSCRIPTION`, Cal.com API key, `EMAIL_MODE`, `C
   NULL body.
 - **Scheduling-link cards are de-duped per episode** (`links_sent` meta) — both the SMS marker
   and the confirmation email can fire for one booking.
+- **Overlapping / out-of-order bookings on one Rover number get their own episode.** Episodes
+  are a linear per-thread counter, but a client can have two bookings open at once (e.g. a
+  boarding inquiry still open while a day-care is booked+confirmed). A confirmation whose stay
+  differs from the *current* episode's scheduling events would otherwise collide with them —
+  `claim_scheduling_event`'s `INSERT OR IGNORE` no-ops on the existing `(thread, episode, kind)`
+  rows and `links_sent:<episode>` is already set — so **no events and no links get made,
+  silently**. Fixed 2026-09-01: `scheduling.on_booking_confirmed` calls `stay_conflicts()` and,
+  on a mismatch (or a CANCELLED prior leg), bumps via `store.start_new_booking_episode` (a
+  compare-and-swap so the SMS+email double-fire can't double-bump) BEFORE placing events, so the
+  new stay lands on a fresh episode with its own links. Same-dates re-confirm does **not** bump.
+  Tests: `test_episode_conflict.py`. (Root case: Revanth `+18582631421` — boarding stranded on
+  the day-care's episode.)
 - **`/movebooking`** only touches legs whose date actually changed (preserves already-confirmed
   times) and neutralizes the superseded Cal.com booking.
 
