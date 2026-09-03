@@ -17,9 +17,8 @@ Commands:
 """
 import logging
 import re
-from datetime import datetime
 
-from . import store
+from . import store, dates
 from .scheduling import (
     CANCELLED, CONFIRMED, DROPOFF, MEET_GREET, PICKUP, build_link, default_slot,
     on_booking_confirmed, ensure_links, title, PENDING, apply_date_change,
@@ -49,15 +48,8 @@ HELP = (
 
 
 def parse_date(text):
-    """Accept YYYY-MM-DD, MM/DD/YYYY, or MM/DD (next future occurrence)."""
-    text = (text or "").strip()
-    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m-%d-%Y"):
-        try:
-            return datetime.strptime(text, fmt).date()
-        except ValueError:
-            pass
-    from .scheduling import parse_booking_date
-    return parse_booking_date(text)
+    """Accept YYYY-MM-DD, MM/DD/YYYY, MM-DD-YYYY, or bare MM/DD (next future occurrence)."""
+    return dates.parse_command_date(text)
 
 
 def _slug(pet):

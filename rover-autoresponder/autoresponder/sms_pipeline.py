@@ -301,6 +301,28 @@ def draft_for_thread(conn, number: str) -> None:
     store.link_card(conn, mid, number)
 
 
+# --- Addendum B: arm a fixed link card through approve-and-send ----------
+def _arm_link_card(conn, number: str, text: str, reason) -> int:
+    """Shared approve-and-send arming for the fixed link cards (scheduling + modification).
+
+    Stores `text` as the thread's pending/last-draft text and pushes a draft card that names
+    the client, then links the card so a reply edits it. `reason` is the card's context line(s).
+    Returns the Telegram message id. The keystone is untouched — this only *arms* the card;
+    nothing reaches the client until you tap Approve.
+    """
+    from . import telegram_notify
+    row = store.get_thread(conn, number)
+    owner, _pet, stay = (row[0], row[1], row[2]) if row else (None, None, None)
+    store.set_pending_text(conn, number, text)
+    store.set_last_draft(conn, number, text)
+    history = store.get_conversation(conn, number)
+    mid = telegram_notify.send_draft_card(
+        owner, stay, "SCHEDULING", reason, history, text,
+        reply_markup=telegram_notify.build_sms_keyboard(number))
+    store.link_card(conn, mid, number)
+    return mid
+
+
 # --- Addendum B / C2: deliver the scheduling links for approval ----------
 def send_scheduling_links(conn, number: str) -> bool:
     """Compose the scheduling-links message and push it to Telegram for approval.
@@ -312,7 +334,6 @@ def send_scheduling_links(conn, number: str) -> bool:
     message we still want to send on a converted thread, so it bypasses the drafter
     rather than going through draft_for_thread().
     """
-    from . import telegram_notify
     from .scheduling import build_scheduling_draft
 
     # A normal booking fires BOTH signals (SMS marker + confirmation email). The calendar
@@ -331,18 +352,9 @@ def send_scheduling_links(conn, number: str) -> bool:
         return False
     store.set_meta(conn, sent_key, "1")
 
-    row = store.get_thread(conn, number)
-    owner, pet, dates = (row[0], row[1], row[2]) if row else (None, None, None)
-    store.set_pending_text(conn, number, text)
-    store.set_last_draft(conn, number, text)
-    history = store.get_conversation(conn, number)
     log.info("  SCHEDULING LINKS drafted for %s\n----- draft -----\n%s\n-----------------",
              number, text)
-    mid = telegram_notify.send_draft_card(
-        owner, dates, "SCHEDULING", ["booking confirmed — send the booking links"],
-        history, text,
-        reply_markup=telegram_notify.build_sms_keyboard(number))
-    store.link_card(conn, mid, number)
+    _arm_link_card(conn, number, text, ["booking confirmed — send the booking links"])
     return True
 
 
@@ -351,22 +363,14 @@ def send_modified_links(conn, number: str, kinds) -> bool:
     """Draft a links message for just the moved legs (e.g. only pick-up) and push it for
     approval. Unlike send_scheduling_links this is NOT deduped (a modification should always
     re-issue) and it never re-sends an unchanged leg's link (which could double-book)."""
-    from . import telegram_notify
     from .scheduling import build_leg_links_message
 
     text, links = build_leg_links_message(conn, number, kinds)
     if not text:
         log.warning("  no links to re-issue for %s (kinds=%s)", number, list(kinds))
         return False
-    row = store.get_thread(conn, number)
-    owner, pet, dates = (row[0], row[1], row[2]) if row else (None, None, None)
-    store.set_pending_text(conn, number, text)
-    store.set_last_draft(conn, number, text)
-    history = store.get_conversation(conn, number)
     log.info("  MODIFIED LINKS (%s) drafted for %s\n----- draft -----\n%s\n---------------",
              list(links), number, text)
-    mid = telegram_notify.send_draft_card(
-        owner, dates, "SCHEDULING", [f"booking modified — re-issue {', '.join(links)} link(s)"],
-        history, text, reply_markup=telegram_notify.build_sms_keyboard(number))
-    store.link_card(conn, mid, number)
+    _arm_link_card(conn, number, text,
+                   [f"booking modified — re-issue {', '.join(links)} link(s)"])
     return True

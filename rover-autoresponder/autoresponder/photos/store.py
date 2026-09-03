@@ -5,6 +5,7 @@ check_same_thread=False), so photo state is thread-safe with the rest of the ser
 `store.init_db` calls `init_schema(conn)` once at startup.
 """
 from .. import store as base
+from .. import dates
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS photo_updates (
@@ -156,31 +157,6 @@ def set_media_r2_key(conn, media_id, r2_key):
 
 
 # --- roster: dogs in custody today (Rover bookings only) ------------------
-def _parse_date(token):
-    from datetime import datetime
-    token = (token or "").strip()
-    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d"):
-        try:
-            d = datetime.strptime(token, fmt).date()
-            if fmt == "%m/%d":                      # year-less → assume this year
-                from datetime import date as _date
-                d = d.replace(year=_date.today().year)
-            return d
-        except ValueError:
-            continue
-    return None
-
-
-def _parse_stay(stay_dates):
-    """'2026-08-31 to 2026-09-06' / '08/31/2026 to 09/06/2026' / single date -> (start, end)."""
-    if not stay_dates:
-        return None, None
-    parts = [p.strip() for p in str(stay_dates).split(" to ")]
-    start = _parse_date(parts[0])
-    end = _parse_date(parts[1]) if len(parts) > 1 else start
-    return start, (end or start)
-
-
 def list_active_bookings(conn, today=None):
     """Confirmed Rover bookings whose stay covers today. Each entry:
     {thread_key, owner, pet, episode, stay_dates}.
@@ -197,7 +173,7 @@ def list_active_bookings(conn, today=None):
             "WHERE has_booked=1 AND status='converted'").fetchall()
     out = []
     for thread_key, owner, pet, stay_dates, episode in rows:
-        start, end = _parse_stay(stay_dates)
+        start, end = dates.parse_stay(stay_dates, today=today)
         if start and end and start <= today <= end:
             out.append({"thread_key": thread_key, "owner": owner, "pet": pet,
                         "episode": episode or 1, "stay_dates": stay_dates})

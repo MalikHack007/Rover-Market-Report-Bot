@@ -7,12 +7,16 @@ date. They are transparent (free) so they never block the slots we're about to o
 C2 adds the scheduling links, C3 the Cal.com poller that flips them to CONFIRMED.
 """
 import logging
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 
-from . import config, store
+from . import config, store, dates
 from .calendar_client import GoogleCalendar, TRANSPARENT
 
 log = logging.getLogger(__name__)
+
+# Canonical booking-date parser now lives in `dates`; re-exported here because callers and
+# tests import it as `scheduling.parse_booking_date`.
+parse_booking_date = dates.parse_booking_date
 
 DROPOFF = "dropoff"
 PICKUP = "pickup"
@@ -32,36 +36,6 @@ def title(pet_name, kind, status):
 
 
 # --- date handling -------------------------------------------------------
-def parse_booking_date(text, today=None):
-    """Parse 'MM/DD' or 'MM/DD/YYYY' into a date.
-
-    The confirmation SMS omits the year ('from 09/01 to 09/06'). A booking is in the
-    future, so a bare MM/DD resolves to its next occurrence — which also rolls a
-    December→January range into the following year.
-    """
-    if not text:
-        return None
-    today = today or date.today()
-    parts = text.strip().split("/")
-    try:
-        month, day = int(parts[0]), int(parts[1])
-        if len(parts) >= 3:
-            year = int(parts[2])
-            if year < 100:
-                year += 2000
-            return date(year, month, day)
-    except (ValueError, IndexError):
-        return None
-    for year in (today.year, today.year + 1):
-        try:
-            d = date(year, month, day)
-        except ValueError:
-            continue                     # e.g. 02/29 in a non-leap year
-        if d >= today - timedelta(days=1):   # small grace for same-day confirmations
-            return d
-    return None
-
-
 def default_slot(day, kind):
     """(start_iso, end_iso) for the PENDING placeholder — a 30-min block."""
     hh, mm = (config.DEFAULT_DROPOFF_TIME if kind != PICKUP
@@ -338,16 +312,6 @@ def scheduling_message(owner_name, pet_name, links, start_date=None, end_date=No
             .replace("{pickup_link}", links[PICKUP]))
 
 
-def _pretty(iso_date):
-    """'2026-09-01' -> 'Tue, Sep 1'."""
-    if not iso_date:
-        return ""
-    try:
-        return datetime.strptime(iso_date, "%Y-%m-%d").strftime("%a, %b %-d")
-    except (ValueError, TypeError):
-        return iso_date
-
-
 def build_scheduling_draft(conn, thread_key, calendar=None):
     """After confirmation: ensure links exist and compose the message to send.
 
@@ -385,7 +349,7 @@ def build_leg_links_message(conn, thread_key, kinds, calendar=None):
              f"{'time' if len(wanted) == 1 else 'time for each'}:"]
     for k in wanted:
         row_k = store.get_scheduling_event(conn, thread_key, episode, k)
-        when = _pretty(row_k[2]) if row_k else ""
+        when = dates.pretty(row_k[2]) if row_k else ""
         lines.append(f"\n{_LABEL.get(k, k)} ({when}): {all_links[k]}")
     lines.append("\nLet me know if none of the times work and we'll sort something out!")
     return "\n".join(lines), {k: all_links[k] for k in wanted}
