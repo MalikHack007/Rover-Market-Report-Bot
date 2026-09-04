@@ -32,6 +32,12 @@ from datetime import date, timedelta
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
+import netprefs
+# Prefer IPv4 before any Google API networking. On the bridged VM broken IPv6 otherwise
+# stalls the Gmail send ~16s and intermittently trips its timeout ("email failed:
+# timed out"). Must run before the API client resolves googleapis.com. Do not remove.
+netprefs.apply()
+
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -183,6 +189,10 @@ def gmail_service():
     return build("gmail", "v1", credentials=creds)
 
 
+SEND_RETRIES = 3            # send attempts before giving up (network can be flaky).
+SEND_BACKOFF = (5, 15)      # seconds slept after attempt 1, then attempt 2.
+
+
 def send_email(service, to, subject, html, text):
     msg = MIMEMultipart("alternative")
     msg["To"] = to
@@ -190,7 +200,22 @@ def send_email(service, to, subject, html, text):
     msg.attach(MIMEText(text, "plain"))
     msg.attach(MIMEText(html, "html"))
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
-    service.users().messages().send(userId="me", body={"raw": raw}).execute()
+    # Retry the network call: a single transient timeout (broken-IPv6 stall, brief
+    # googleapis blip) shouldn't cost the whole day's email. IPv4 preference above
+    # makes this rare; the retry covers the residue. Re-raise on final failure so the
+    # caller still logs the report to cron.log.
+    for attempt in range(1, SEND_RETRIES + 1):
+        try:
+            service.users().messages().send(
+                userId="me", body={"raw": raw}).execute()
+            return
+        except Exception as e:
+            if attempt == SEND_RETRIES:
+                raise
+            wait = SEND_BACKOFF[attempt - 1]
+            print(f"  [send] attempt {attempt}/{SEND_RETRIES} failed: {e}; "
+                  f"retrying in {wait}s")
+            time.sleep(wait)
 
 
 # ---------------- report ----------------
