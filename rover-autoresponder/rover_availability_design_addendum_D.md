@@ -1,7 +1,7 @@
 # Design Addendum D — Client-facing availability calendar
 
-**Status:** v0.3 (D0 proven live; **D1 built** — publisher + `calcom_client.available_days`
-+ tests; next: D2 R2 hosting)
+**Status:** v0.4 (D0 proven live; **D1 + D2 built** — publisher, `calcom_client.available_days`,
+public R2 hosting, tests; next: D3 static page)
 **Extends:** `rover_autoresponder_design.md` (v0.3) + Addendum A (SMS) + Addendum B (calendar, v0.7)
 **Owner:** Malik
 **Last updated:** 2026-09-20
@@ -100,13 +100,18 @@ Three pieces:
 that is the *wrong* pattern here. A client bookmarks/opens this page later, so both objects
 must be **durably public** at stable URLs:
 
-- Serve the bucket (or a dedicated prefix) over R2's **public access** — the `*.r2.dev`
-  managed domain or, preferably, a **custom subdomain** (e.g. `availability.<domain>`).
+- **A SEPARATE, public-read bucket** (`AVAIL_R2_BUCKET`) — **not** the MMS bucket, which stays
+  private (presigned + deleted after delivery). Making that public would expose client photos.
+  R2 *account* creds are shared (`photos/config.py`); only the bucket + base URL differ.
+- Serve it over a **custom subdomain** (`availability.<domain>`, settled §14.1) bound to the
+  bucket in Cloudflare — **public GET only, not LIST** (so the bucket can't be enumerated).
+  `AVAIL_PUBLIC_BASE_URL` is that subdomain. This binding is a **one-time Cloudflare/R2 step**;
+  the code only PUTs objects.
 - `index.html` and `availability.json` sit at fixed keys; no signing, no expiry.
-- Do **not** reuse the presigned `upload()` helper's TTL logic for these; add a small
-  `put_public(key, body, content_type, cache_control)` alongside it. Keep the two patterns
-  visibly separate so nobody makes the availability page presigned (it would 403 for clients
-  after the TTL).
+- **Built:** `availability/hosting.py::put_public(key, body, content_type, cache_control)` —
+  deliberately separate from the photos presigned `upload()` so nobody makes the availability
+  page presigned (it would 403 for clients after the TTL). `availability.json` gets
+  `max-age=300`, `index.html` `max-age=3600`.
 
 ---
 
@@ -304,8 +309,15 @@ un-authed, the invariant is that it can only ever leak a per-day boolean.**
   Tests: `tests/test_availability.py` (12, green) — shape-robust reduction, tz day-bucketing,
   the JSON contract, and the don't-publish-a-lie outage path. **Confirmed:** the published
   shape matches `availability-front-end-design/` (the prototyped page + `README.md` contract).
-- **D2 — R2 public hosting.** `put_public()` helper; bucket public-GET policy; upload
-  `availability.json` on each refresh. Confirm a browser can fetch it at the public URL.
+- **D2 — R2 public hosting.** ✅ **Built.** `autoresponder/availability/hosting.py`:
+  `put_public()` (durable, stable-key, no presign), `publish_feed()` (the `run_once` publish
+  callback), `publish_page()` (for D3's `index.html`), and `feed_publisher_or_none()` (returns
+  the callback only when `AVAIL_R2_BUCKET` + `AVAIL_PUBLIC_BASE_URL` are set, else the publisher
+  runs D1-only: local file, no upload). Uses a **separate public bucket**, sharing the photos
+  R2 account creds. Wired into `sms_main`. Tests: `tests/test_availability_hosting.py` (7,
+  green). **⏳ One-time ops step on Malik:** create the public bucket, bind the custom subdomain
+  (public GET only), set `AVAIL_R2_BUCKET` + `AVAIL_PUBLIC_BASE_URL` in `.env`, then confirm a
+  browser fetches `…/availability/availability.json`.
 - **D3 — Frontend.** `index.html` month grid; upload once; test on mobile; color-blind-safe
   greying; failure fallback.
 - **D4 — Event-driven nudge (optional).** Re-publish on booking confirm/cancel/modify.
@@ -321,12 +333,15 @@ un-authed, the invariant is that it can only ever leak a per-day boolean.**
 | `AVAIL_PROBE_EVENT_TYPE_ID` | Cal.com probe event type queried for slots | — (required) |
 | `AVAIL_HORIZON_DAYS` | how many days ahead to publish | 90 |
 | `AVAIL_REFRESH_SEC` | refresh interval | 900 |
+| `AVAIL_R2_BUCKET` | **public** R2 bucket (NOT the MMS bucket) | — (required for upload) |
 | `AVAIL_R2_PUBLIC_KEY_JSON` | R2 key for `availability.json` | `availability/availability.json` |
 | `AVAIL_R2_PUBLIC_KEY_HTML` | R2 key for `index.html` | `availability/index.html` |
-| `AVAIL_PUBLIC_BASE_URL` | public base (r2.dev or custom domain) | — (required) |
+| `AVAIL_PUBLIC_BASE_URL` | custom-domain public base | — (required for upload) |
+| `AVAIL_LOCAL_JSON_PATH` | where D1 writes the feed locally (gitignored) | `<pkg>/availability.json` |
 
-Reuses existing `R2_*`, `CALCOM_API_KEY`, `CALENDAR_TIMEZONE`. No new secrets beyond the probe
-event-type id and the public base URL — both non-sensitive.
+Reuses existing `R2_*` account creds (canonical home `photos/config.py`), `CALCOM_API_KEY`,
+`CALENDAR_TIMEZONE`. No new secrets beyond the probe event-type id and the public base URL —
+both non-sensitive.
 
 ---
 

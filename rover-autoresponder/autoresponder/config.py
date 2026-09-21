@@ -140,6 +140,9 @@ AVAIL_REFRESH_SEC = int(os.environ.get("AVAIL_REFRESH_SEC", "900"))
 # because the slots shape drifts across versions (D0 verifies the real shape).
 AVAIL_SLOTS_API_VERSION = os.environ.get("AVAIL_SLOTS_API_VERSION", "2024-09-04")
 # R2 public (NOT presigned) hosting for the static page + JSON, served over a custom domain.
+# SEPARATE bucket from the MMS one (photos R2_BUCKET stays PRIVATE — presigned + deleted after
+# delivery; this bucket is public-read). R2 *account* creds are shared (photos/config.py).
+AVAIL_R2_BUCKET = os.environ.get("AVAIL_R2_BUCKET", "")                      # public bucket, NOT the MMS bucket
 AVAIL_PUBLIC_BASE_URL = os.environ.get("AVAIL_PUBLIC_BASE_URL", "")          # e.g. https://availability.example.com
 AVAIL_R2_PUBLIC_KEY_JSON = os.environ.get("AVAIL_R2_PUBLIC_KEY_JSON", "availability/availability.json")
 AVAIL_R2_PUBLIC_KEY_HTML = os.environ.get("AVAIL_R2_PUBLIC_KEY_HTML", "availability/index.html")

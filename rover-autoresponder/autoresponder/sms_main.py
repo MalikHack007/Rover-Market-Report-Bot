@@ -74,7 +74,8 @@ def main() -> None:
         # writes availability.json. No-ops unless AVAIL_PROBE_EVENT_TYPE_ID is set, so it
         # can't disturb the SMS service. (D2 wires the R2 upload via a publish callback.)
         from .availability.publisher import start_thread as start_availability
-        start_availability()
+        from .availability import hosting as avail_hosting
+        start_availability(publish=avail_hosting.feed_publisher_or_none())
 
         # Addendum C / P2: batched delivery-status poller for photo updates. Makes zero API
         # calls when idle; polls Telerivet only while a sent batch is still settling.
