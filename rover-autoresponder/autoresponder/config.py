@@ -129,6 +129,22 @@ CALCOM_RETRIES = int(os.environ.get("CALCOM_RETRIES", "3"))
 # consecutive failed polls before alerting (5 = ~5 min at the default interval)
 CALCOM_ALERT_AFTER = int(os.environ.get("CALCOM_ALERT_AFTER", "5"))
 
+# --- Addendum D: client-facing availability calendar ---
+# A day is AVAILABLE iff Cal.com offers >=1 slot on the probe event type (which checks BOTH
+# the ROVER and personal calendars for conflicts). Zero slots => an all-day block on either
+# calendar, or a fully-booked day => UNAVAILABLE. See rover_availability_design_addendum_D.md.
+AVAIL_PROBE_EVENT_TYPE_ID = os.environ.get("AVAIL_PROBE_EVENT_TYPE_ID", "")  # required
+AVAIL_HORIZON_DAYS = int(os.environ.get("AVAIL_HORIZON_DAYS", "90"))
+AVAIL_REFRESH_SEC = int(os.environ.get("AVAIL_REFRESH_SEC", "900"))
+# Cal.com's slots endpoint pins its own api-version; kept separate from the poller's header
+# because the slots shape drifts across versions (D0 verifies the real shape).
+AVAIL_SLOTS_API_VERSION = os.environ.get("AVAIL_SLOTS_API_VERSION", "2024-09-04")
+# R2 public (NOT presigned) hosting for the static page + JSON, served over a custom domain.
+AVAIL_PUBLIC_BASE_URL = os.environ.get("AVAIL_PUBLIC_BASE_URL", "")          # e.g. https://availability.example.com
+AVAIL_R2_PUBLIC_KEY_JSON = os.environ.get("AVAIL_R2_PUBLIC_KEY_JSON", "availability/availability.json")
+AVAIL_R2_PUBLIC_KEY_HTML = os.environ.get("AVAIL_R2_PUBLIC_KEY_HTML", "availability/index.html")
+
+
 # The scheduling links are folded into the post-confirmation message
 # (POST_CONFIRMATION_PATH) rather than a standalone card — see scheduling.scheduling_message.
 MEETGREET_LINK_TEMPLATE = os.environ.get(
