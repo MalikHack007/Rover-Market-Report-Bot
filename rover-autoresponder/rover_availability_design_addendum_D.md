@@ -1,7 +1,7 @@
 # Design Addendum D — Client-facing availability calendar
 
-**Status:** v0.2 (design accepted; D0 probe harness built — `live_availability_test.py`;
-awaiting live validation, then D1)
+**Status:** v0.3 (D0 proven live; **D1 built** — publisher + `calcom_client.available_days`
++ tests; next: D2 R2 hosting)
 **Extends:** `rover_autoresponder_design.md` (v0.3) + Addendum A (SMS) + Addendum B (calendar, v0.7)
 **Owner:** Malik
 **Last updated:** 2026-09-20
@@ -210,8 +210,11 @@ absorbs load.
 - **Mobile-first & accessible:** most clients open it on a phone from a text link; greyed state
   must be distinguishable without relying on color alone (add a strike/label).
 
-*(This file is written and reviewed during build; per project convention the actual page is
-built after this design is accepted — not in this doc.)*
+**The page is already prototyped** in `availability-front-end-design/` (high-fidelity
+`Dog Sitting Calendar.dc.html` + a `README.md` handoff spec + a sample `availability.json`).
+Its data contract is **identical to §6** — D1's publisher was verified against it. D3 recreates
+that prototype as a plain static `index.html` (its calendar/grid/status logic is directly
+portable) and wires `fetch('availability.json')` in place of the embedded sample.
 
 ---
 
@@ -293,9 +296,14 @@ un-authed, the invariant is that it can only ever leak a per-day boolean.**
   the docstring procedure — add an all-day block on a free day, first on **ROVER** then on the
   **personal** calendar, and confirm each flips that day to 0 slots. **Gate:** nothing else
   proceeds until both halves flip to zero.
-- **D1 — Publisher.** `calcom_client.available_days()` + reduction + `availability.json`
-  writer; unit tests with a fake Cal.com client (mirror existing test style). Decide
-  thread-in-`rover-sms` vs standalone timer.
+- **D1 — Publisher.** ✅ **Built.** `calcom_client.available_days()` + defensive
+  `slots_by_day()` reducer; `autoresponder/availability/publisher.py` (`refresh` / `run_once`
+  / `run_loop` / `start_thread`) writes `availability.json` atomically in the exact frontend
+  contract; self-healing (keeps last good feed on a Cal.com outage). Wired into
+  `sms_main.py` as a guarded daemon thread (no-ops without `AVAIL_PROBE_EVENT_TYPE_ID`).
+  Tests: `tests/test_availability.py` (12, green) — shape-robust reduction, tz day-bucketing,
+  the JSON contract, and the don't-publish-a-lie outage path. **Confirmed:** the published
+  shape matches `availability-front-end-design/` (the prototyped page + `README.md` contract).
 - **D2 — R2 public hosting.** `put_public()` helper; bucket public-GET policy; upload
   `availability.json` on each refresh. Confirm a browser can fetch it at the public URL.
 - **D3 — Frontend.** `index.html` month grid; upload once; test on mobile; color-blind-safe

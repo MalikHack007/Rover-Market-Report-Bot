@@ -69,6 +69,13 @@ def main() -> None:
             threading.Thread(target=calcom_poll_loop, args=(conn,),
                              daemon=True, name="calcom-poller").start()
 
+        # Addendum D / D1: publish the client-facing availability feed. Reads Cal.com's
+        # probe-event-type open slots (which honor the ROVER + personal calendars) and
+        # writes availability.json. No-ops unless AVAIL_PROBE_EVENT_TYPE_ID is set, so it
+        # can't disturb the SMS service. (D2 wires the R2 upload via a publish callback.)
+        from .availability.publisher import start_thread as start_availability
+        start_availability()
+
         # Addendum C / P2: batched delivery-status poller for photo updates. Makes zero API
         # calls when idle; polls Telerivet only while a sent batch is still settling.
         from .photos.poller import poll_loop as photo_poll_loop

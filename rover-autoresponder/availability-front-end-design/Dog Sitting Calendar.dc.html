@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  body { margin: 0; background: oklch(0.96 0.004 260); }
+  a { color: oklch(0.6 0.12 45); }
+  a:hover { color: oklch(0.5 0.13 45); }
+</style>
+</helmet>
+
+<section style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:48px 20px;font-family:'Work Sans',sans-serif;box-sizing:border-box;">
+  <div style="width:100%;max-width:560px;background:oklch(0.99 0.003 250);border-radius:6px;box-shadow:0 20px 50px -24px oklch(0.4 0.02 260 / 0.5);overflow:hidden;border:1px solid oklch(0.92 0.004 260);">
+
+    <div style="padding:44px 40px 28px;border-bottom:1px solid oklch(0.93 0.004 260);">
+      <div style="display:flex;align-items:center;gap:16px;">
+        <div style="width:64px;height:64px;border-radius:50%;flex:0 0 auto;background:repeating-linear-gradient(45deg,oklch(0.93 0.006 260),oklch(0.93 0.006 260) 6px,oklch(0.9 0.008 260) 6px,oklch(0.9 0.008 260) 12px);display:flex;align-items:center;justify-content:center;font:500 8px/1.3 monospace;color:oklch(0.5 0.01 260);text-align:center;">your<br>photo</div>
+        <div>
+          <div style="font:700 25px/1.05 'Bricolage Grotesque',sans-serif;color:oklch(0.24 0.01 260);letter-spacing:-0.01em;">Marlowe's Dog Sitting</div>
+          <div style="font:400 14px/1.45 'Work Sans',sans-serif;color:oklch(0.5 0.01 260);margin-top:5px;max-width:360px;">Cozy, cage-free care for good boys & girls. Weekend & holiday spots fill fast.</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="padding:26px 40px 40px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+        <div style="display:flex;align-items:center;gap:6px;">
+          <div onClick="{{ prevMonth }}" style="width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;font:400 18px/1 'Work Sans',sans-serif;color:oklch(0.45 0.01 260);" style-hover="background:oklch(0.95 0.004 260);">‹</div>
+          <div style="font:700 20px/1 'Bricolage Grotesque',sans-serif;color:oklch(0.24 0.01 260);letter-spacing:-0.01em;min-width:150px;text-align:center;">{{ monthLabel }}</div>
+          <div onClick="{{ nextMonth }}" style="width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;font:400 18px/1 'Work Sans',sans-serif;color:oklch(0.45 0.01 260);" style-hover="background:oklch(0.95 0.004 260);">›</div>
+        </div>
+        <div style="display:flex;gap:18px;font:500 12px/1 'Work Sans',sans-serif;">
+          <span style="display:flex;align-items:center;gap:6px;color:oklch(0.45 0.01 260);"><span style="width:8px;height:8px;border-radius:50%;background:oklch(0.62 0.14 150);"></span>Available</span>
+          <span style="display:flex;align-items:center;gap:6px;color:oklch(0.45 0.01 260);"><span style="width:8px;height:8px;border-radius:50%;background:oklch(0.82 0.01 260);"></span>Away</span>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;">
+        <sc-for list="{{ dow }}" as="d" hint-placeholder-count="7">
+          <div style="text-align:center;font:600 10px/1 'Work Sans',sans-serif;letter-spacing:.08em;color:oklch(0.6 0.01 260);padding-bottom:10px;text-transform:uppercase;">{{ d }}</div>
+        </sc-for>
+        <sc-for list="{{ cells }}" as="c" hint-placeholder-count="35">
+          <div onClick="{{ c.pick }}" style="{{ c.style }}">{{ c.label }}</div>
+        </sc-for>
+      </div>
+
+      <div style="margin-top:24px;min-height:22px;font:500 14px/1.3 'Work Sans',sans-serif;color:oklch(0.4 0.01 260);">{{ status }}</div>
+    </div>
+  </div>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { year: 2026, month: 8, sel: null, feed: null };
+
+  // Sample feed. In production this is fetched from availability.json (see handoff README).
+  // Shape: { default, days: { "YYYY-MM-DD": boolean } }  (true=available, false=away)
+  sample() {
+    return {
+      generated_at: "2026-09-20T14:05:00Z", timezone: "America/Chicago", horizon_days: 90, default: "unknown",
+      days: {
+        "2026-09-20": true, "2026-09-21": true, "2026-09-22": false, "2026-09-23": false,
+        "2026-09-26": true, "2026-09-27": true, "2026-09-28": true,
+        "2026-10-01": true, "2026-10-02": true, "2026-10-03": false, "2026-10-10": false, "2026-10-11": false,
+        "2026-10-17": true, "2026-10-18": true
+      }
+    };
+  }
+
+  componentDidMount() {
+    // Production: fetch("availability.json").then(r=>r.json()).then(d=>this.setState({feed:d}))
+    this.setState({ feed: this.sample() });
+  }
+
+  iso(d) { return `${this.state.year}-${String(this.state.month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`; }
+
+  statusFor(d) {
+    const feed = this.state.feed;
+    if (!feed) return "none";
+    const v = feed.days ? feed.days[this.iso(d)] : undefined;
+    if (v === true) return "available";
+    if (v === false) return "away";
+    return feed.default === true ? "available" : feed.default === false ? "away" : "none";
+  }
+
+  shift(delta) {
+    let m = this.state.month + delta, y = this.state.year;
+    if (m < 0) { m = 11; y--; } if (m > 11) { m = 0; y++; }
+    this.setState({ month: m, year: y, sel: null });
+  }
+
+  renderVals() {
+    const { year, month } = this.state;
+    const monthLabel = new Date(year, month, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+    const first = new Date(year, month, 1).getDay();
+    const days = new Date(year, month + 1, 0).getDate();
+
+    const cells = [];
+    for (let i = 0; i < first; i++) cells.push({ label: "", blank: true });
+    for (let d = 1; d <= days; d++) { const st = this.statusFor(d); cells.push({ label: String(d), day: d, status: st, pick: () => this.setState({ sel: { d, status: st } }) }); }
+    while (cells.length % 7 !== 0) cells.push({ label: "", blank: true });
+
+    const base = { height: "54px", width: "54px", margin: "2px auto", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", font: "500 15px/1 'Work Sans',sans-serif", userSelect: "none", border: "1.5px solid transparent" };
+    cells.forEach(c => {
+      let s = { ...base };
+      if (c.blank) s.visibility = "hidden";
+      else if (c.status === "available") s = { ...s, color: "oklch(0.28 0.01 260)", cursor: "pointer", border: "1.5px solid oklch(0.62 0.14 150)" };
+      else if (c.status === "away") s = { ...s, color: "oklch(0.75 0.01 260)", cursor: "pointer", textDecoration: "line-through" };
+      else s = { ...s, color: "oklch(0.55 0.01 260)" };
+      if (this.state.sel && c.day === this.state.sel.d) { s.background = "oklch(0.24 0.01 260)"; s.color = "oklch(0.99 0.003 250)"; s.border = "1.5px solid oklch(0.24 0.01 260)"; }
+      c.style = s;
+    });
+
+    const sel = this.state.sel;
+    let status = "Tap a day to see its status";
+    if (sel) {
+      const dt = new Date(year, month, sel.d).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+      status = sel.status === "available" ? `${dt} — Available for booking`
+        : sel.status === "away" ? `${dt} — Away, not taking dogs`
+        : `${dt} — No availability set`;
+    }
+
+    return { monthLabel, dow: ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"], cells, status, prevMonth: () => this.shift(-1), nextMonth: () => this.shift(1) };
+  }
+}
+</script>
+</body>
+</html>

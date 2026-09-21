@@ -143,6 +143,9 @@ AVAIL_SLOTS_API_VERSION = os.environ.get("AVAIL_SLOTS_API_VERSION", "2024-09-04"
 AVAIL_PUBLIC_BASE_URL = os.environ.get("AVAIL_PUBLIC_BASE_URL", "")          # e.g. https://availability.example.com
 AVAIL_R2_PUBLIC_KEY_JSON = os.environ.get("AVAIL_R2_PUBLIC_KEY_JSON", "availability/availability.json")
 AVAIL_R2_PUBLIC_KEY_HTML = os.environ.get("AVAIL_R2_PUBLIC_KEY_HTML", "availability/index.html")
+# D1 writes the feed here locally (absolute path); D2 uploads this to R2.
+AVAIL_LOCAL_JSON_PATH = os.environ.get(
+    "AVAIL_LOCAL_JSON_PATH", os.path.join(_HERE, "availability.json"))
 
 
 # The scheduling links are folded into the post-confirmation message

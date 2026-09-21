@@ -23,3 +23,7 @@ credentials.json*
 pubsub-sa.json
 *.bak
 certs/
+# Addendum D: the publisher's generated feed (runtime output; D2 uploads it to R2).
+# The committed sample under availability-front-end-design/ is a design fixture — keep that.
+autoresponder/availability.json
+autoresponder/availability.json.tmp
