@@ -27,3 +27,5 @@ certs/
 # The committed sample under availability-front-end-design/ is a design fixture — keep that.
 autoresponder/availability.json
 autoresponder/availability.json.tmp
+# Raw camera original for the avatar (3.9MB); the processed photo.jpg (68KB) is the asset.
+availability-front-end-design/yujienbrownie.JPG

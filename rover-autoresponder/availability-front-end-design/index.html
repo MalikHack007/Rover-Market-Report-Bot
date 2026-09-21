@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>Is Yujie Available?</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700&family=Work+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      /* Design tokens (Addendum D §7 / availability-front-end-design/README.md). Hex first as a
+     fallback, then the final oklch — browsers without oklch keep the hex. */
+      :root {
+        --page-bg: #f2f3f4;
+        --page-bg: oklch(0.96 0.004 260);
+        --card-bg: #fbfbfc;
+        --card-bg: oklch(0.99 0.003 250);
+        --card-bd: #e7e8ea;
+        --card-bd: oklch(0.92 0.004 260);
+        --hair: #eceded;
+        --hair: oklch(0.93 0.004 260);
+        --ink: #2b2d31;
+        --ink: oklch(0.24 0.01 260);
+        --body: #6f7176;
+        --body: oklch(0.5 0.01 260);
+        --muted: #565a5f;
+        --muted: oklch(0.4 0.01 260);
+        --faint: #8a8d92;
+        --faint: oklch(0.6 0.01 260);
+        --green: #1f9e6b;
+        --green: oklch(0.62 0.14 150);
+        --away-dot: #cbccce;
+        --away-dot: oklch(0.82 0.01 260);
+        --avail-txt: #3c3f44;
+        --avail-txt: oklch(0.28 0.01 260);
+        --away-txt: #b7b9bc;
+        --away-txt: oklch(0.75 0.01 260);
+        --unset-txt: #83868b;
+        --unset-txt: oklch(0.55 0.01 260);
+        --nav-hover: #f0f1f2;
+        --nav-hover: oklch(0.95 0.004 260);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--page-bg);
+        color: var(--ink);
+        font-family: "Work Sans", system-ui, -apple-system, Segoe UI, Roboto,
+          sans-serif;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 48px 20px;
+        padding-top: calc(48px + env(safe-area-inset-top, 0px));
+        padding-bottom: calc(48px + env(safe-area-inset-bottom, 0px));
+      }
+      a {
+        color: oklch(0.6 0.12 45);
+      }
+      a:hover {
+        color: oklch(0.5 0.13 45);
+      }
+
+      .card {
+        width: 100%;
+        max-width: 560px;
+        background: var(--card-bg);
+        border-radius: 6px;
+        border: 1px solid var(--card-bd);
+        overflow: hidden;
+        box-shadow: 0 20px 50px -24px oklch(0.4 0.02 260 / 0.5);
+      }
+
+      .header {
+        padding: 44px 40px 28px;
+        border-bottom: 1px solid var(--hair);
+        display: flex;
+        align-items: center;
+        gap: 16px;
+      }
+      .avatar {
+        width: 64px;
+        height: 64px;
+        border-radius: 50%;
+        flex: 0 0 auto;
+        object-fit: cover;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: repeating-linear-gradient(
+          45deg,
+          oklch(0.93 0.006 260),
+          oklch(0.93 0.006 260) 6px,
+          oklch(0.9 0.008 260) 6px,
+          oklch(0.9 0.008 260) 12px
+        );
+        font: 600 22px/1 "Bricolage Grotesque", sans-serif;
+        color: oklch(0.45 0.01 260);
+      }
+      .name {
+        font: 700 25px/1.05 "Bricolage Grotesque", sans-serif;
+        color: var(--ink);
+        letter-spacing: -0.01em;
+      }
+      .bio {
+        font: 400 14px/1.45 "Work Sans", sans-serif;
+        color: var(--body);
+        margin-top: 5px;
+        max-width: 360px;
+      }
+
+      .body {
+        padding: 26px 40px 34px;
+      }
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 20px;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .nav {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .arrow {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        font: 400 18px/1 "Work Sans", sans-serif;
+        color: oklch(0.45 0.01 260);
+        user-select: none;
+      }
+      .arrow:hover {
+        background: var(--nav-hover);
+      }
+      .month {
+        font: 700 20px/1 "Bricolage Grotesque", sans-serif;
+        color: var(--ink);
+        letter-spacing: -0.01em;
+        min-width: 150px;
+        text-align: center;
+      }
+      .legend {
+        display: flex;
+        gap: 18px;
+        font: 500 12px/1 "Work Sans", sans-serif;
+      }
+      .legend span {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        color: oklch(0.45 0.01 260);
+      }
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex: 0 0 auto;
+      }
+      .dot.available {
+        background: var(--green);
+      }
+      .dot.away {
+        background: var(--away-dot);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(7, 1fr);
+        gap: 2px;
+      }
+      .dow {
+        text-align: center;
+        font: 600 10px/1 "Work Sans", sans-serif;
+        letter-spacing: 0.08em;
+        color: var(--faint);
+        padding-bottom: 10px;
+        text-transform: uppercase;
+      }
+      .cell {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .day {
+        width: 100%;
+        max-width: 54px;
+        aspect-ratio: 1;
+        margin: 2px auto;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font: 500 15px/1 "Work Sans", sans-serif;
+        user-select: none;
+        border: 1.5px solid transparent;
+        background: transparent;
+        color: var(--unset-txt);
+      }
+      .day.blank {
+        visibility: hidden;
+      }
+      .day.available {
+        color: var(--avail-txt);
+        border-color: var(--green);
+        cursor: pointer;
+      }
+      .day.away {
+        color: var(--away-txt);
+        text-decoration: line-through;
+        cursor: pointer;
+      }
+      .day.unset {
+        color: var(--unset-txt);
+        cursor: pointer;
+      }
+      .day.past {
+        color: oklch(0.8 0.006 260);
+      }
+      .day.selected {
+        background: var(--ink);
+        color: var(--card-bg);
+        border-color: var(--ink);
+      }
+
+      .status {
+        margin-top: 24px;
+        min-height: 22px;
+        font: 500 14px/1.35 "Work Sans", sans-serif;
+        color: var(--muted);
+      }
+      .updated {
+        margin-top: 6px;
+        font: 400 12px/1.3 "Work Sans", sans-serif;
+        color: var(--faint);
+      }
+
+      @media (max-width: 440px) {
+        body {
+          padding: 24px 14px;
+        }
+        .header {
+          padding: 30px 22px 22px;
+        }
+        .body {
+          padding: 22px 22px 28px;
+        }
+        .name {
+          font-size: 22px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <div class="header">
+        <div class="avatar" id="avatar">Y</div>
+        <div>
+          <div class="name" id="name">Yujie & Yap Dog Boarding</div>
+          <div class="bio" id="bio">
+            Quickly check if I'm available for your desired dates!
+          </div>
+        </div>
+      </div>
+      <div class="body">
+        <div class="topbar">
+          <div class="nav">
+            <div
+              class="arrow"
+              id="prev"
+              aria-label="Previous month"
+              role="button"
+              tabindex="0"
+            >
+              ‹
+            </div>
+            <div class="month" id="month">—</div>
+            <div
+              class="arrow"
+              id="next"
+              aria-label="Next month"
+              role="button"
+              tabindex="0"
+            >
+              ›
+            </div>
+          </div>
+          <div class="legend">
+            <span><span class="dot available"></span>Available</span>
+            <span><span class="dot away"></span>Away</span>
+          </div>
+        </div>
+        <div
+          class="grid"
+          id="grid"
+          role="grid"
+          aria-label="Availability calendar"
+        ></div>
+        <div class="status" id="status">Loading availability…</div>
+        <div class="updated" id="updated"></div>
+      </div>
+    </main>
+
+    <script>
+      "use strict";
+      /* Addendum D / D3 — static availability calendar. Reads availability.json (contract in
+   README.md / Addendum D §6) and renders a read-only month grid. Pure vanilla JS, no build.
+   The calendar logic mirrors the prototype (Dog Sitting Calendar.dc.html), which the handoff
+   README notes is "directly portable". */
+
+      /* --- Business identity: edit these three to personalize. Blank photoUrl shows a monogram. --- */
+      var IDENTITY = {
+        name: "Yujie and Yap Dog Boarding",
+        bio: "Quickly check to see if I'm available for your desired dates!",
+        photoUrl: "photo.jpg", // square avatar, same-origin; blank keeps the monogram placeholder
+      };
+      var FEED_URL = "availability.json"; // same-origin, root-served (Addendum D / D2)
+
+      var DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+      var now0 = new Date();
+      var state = {
+        year: now0.getFullYear(),
+        month: now0.getMonth(), // 0-indexed
+        sel: null, // {y,m,d,status}
+        feed: null,
+        error: false,
+      };
+
+      function pad(n) {
+        return String(n).padStart(2, "0");
+      }
+      function iso(y, m, d) {
+        return y + "-" + pad(m + 1) + "-" + pad(d);
+      }
+      function todayISO() {
+        var t = new Date();
+        return iso(t.getFullYear(), t.getMonth(), t.getDate());
+      }
+
+      /* Status for a given ISO date: available | away | unknown | past. D1 emits an explicit
+   boolean for every in-horizon day, so a missing FUTURE day is beyond the horizon → unknown
+   ("message me to check", Addendum D decision §14.4). */
+      function statusFor(isoDate) {
+        var tISO = todayISO();
+        if (isoDate < tISO) return "past";
+        var feed = state.feed;
+        if (
+          feed &&
+          feed.days &&
+          Object.prototype.hasOwnProperty.call(feed.days, isoDate)
+        ) {
+          return feed.days[isoDate] === true ? "available" : "away";
+        }
+        if (feed && feed.default === true) return "available";
+        if (feed && feed.default === false) return "away";
+        return "unknown";
+      }
+
+      function longDate(y, m, d) {
+        return new Date(y, m, d).toLocaleDateString("en-US", {
+          weekday: "long",
+          month: "long",
+          day: "numeric",
+        });
+      }
+
+      function relTime(isoTs) {
+        try {
+          var then = new Date(isoTs),
+            secs = (Date.now() - then.getTime()) / 1000;
+          if (isNaN(secs)) return "";
+          if (secs < 90) return "just now";
+          var mins = Math.round(secs / 60);
+          if (mins < 60) return mins + " min ago";
+          var hrs = Math.round(mins / 60);
+          if (hrs < 24) return hrs + (hrs === 1 ? " hour ago" : " hours ago");
+          var days = Math.round(hrs / 24);
+          return days + (days === 1 ? " day ago" : " days ago");
+        } catch (e) {
+          return "";
+        }
+      }
+
+      function shift(delta) {
+        var m = state.month + delta,
+          y = state.year;
+        if (m < 0) {
+          m = 11;
+          y--;
+        }
+        if (m > 11) {
+          m = 0;
+          y++;
+        }
+        state.month = m;
+        state.year = y;
+        state.sel = null;
+        render();
+      }
+
+      function pickDay(y, m, d, st) {
+        if (st === "blank") return;
+        state.sel = { y: y, m: m, d: d, status: st };
+        render();
+      }
+
+      function statusLine() {
+        if (state.error)
+          return "Couldn’t load availability — text me and I’ll confirm.";
+        if (!state.feed) return "Loading availability…";
+        var s = state.sel;
+        if (!s) return "Tap a day to see its status";
+        var dt = longDate(s.y, s.m, s.d);
+        switch (s.status) {
+          case "available":
+            return dt + " — Available for booking";
+          case "away":
+            return dt + " — Away, not taking dogs";
+          case "past":
+            return dt + " — In the past";
+          default:
+            return dt + " — Not set yet — message me to check";
+        }
+      }
+
+      function render() {
+        document.getElementById("month").textContent = new Date(
+          state.year,
+          state.month,
+          1
+        ).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+
+        var grid = document.getElementById("grid");
+        grid.textContent = "";
+
+        DOW.forEach(function (d) {
+          var el = document.createElement("div");
+          el.className = "dow";
+          el.textContent = d;
+          grid.appendChild(el);
+        });
+
+        var first = new Date(state.year, state.month, 1).getDay();
+        var days = new Date(state.year, state.month + 1, 0).getDate();
+        var cells = [];
+        for (var i = 0; i < first; i++) cells.push(null);
+        for (var dd = 1; dd <= days; dd++) cells.push(dd);
+        while (cells.length % 7 !== 0) cells.push(null);
+
+        cells.forEach(function (d) {
+          var wrap = document.createElement("div");
+          wrap.className = "cell";
+          var el = document.createElement("div");
+          if (d === null) {
+            el.className = "day blank";
+          } else {
+            var st = statusFor(iso(state.year, state.month, d));
+            el.className = "day " + st;
+            el.textContent = String(d);
+            el.setAttribute("role", "gridcell");
+            if (st !== "past") {
+              el.tabIndex = 0;
+              el.addEventListener(
+                "click",
+                pickDay.bind(null, state.year, state.month, d, st)
+              );
+              el.addEventListener("keydown", function (e) {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  pickDay(state.year, state.month, d, st);
+                }
+              });
+            }
+            if (
+              state.sel &&
+              state.sel.y === state.year &&
+              state.sel.m === state.month &&
+              state.sel.d === d
+            ) {
+              el.className = "day selected";
+            }
+          }
+          wrap.appendChild(el);
+          grid.appendChild(wrap);
+        });
+
+        document.getElementById("status").textContent = statusLine();
+        var upd = document.getElementById("updated");
+        if (state.feed && state.feed.generated_at && !state.error) {
+          var r = relTime(state.feed.generated_at);
+          upd.textContent = r ? "Availability updated " + r : "";
+        } else {
+          upd.textContent = "";
+        }
+      }
+
+      function applyIdentity() {
+        document.getElementById("name").textContent = IDENTITY.name;
+        document.getElementById("bio").textContent = IDENTITY.bio;
+        document.title = "Is " + IDENTITY.name.split("'")[0] + " Available?";
+        if (IDENTITY.photoUrl) {
+          var a = document.getElementById("avatar");
+          var img = document.createElement("img");
+          img.className = "avatar";
+          img.src = IDENTITY.photoUrl;
+          img.alt = IDENTITY.name;
+          a.replaceWith(img);
+        } else {
+          document.getElementById("avatar").textContent = (
+            IDENTITY.name.trim()[0] || "•"
+          ).toUpperCase();
+        }
+      }
+
+      function loadFeed() {
+        fetch(FEED_URL, { cache: "no-store" })
+          .then(function (r) {
+            if (!r.ok) throw new Error("HTTP " + r.status);
+            return r.json();
+          })
+          .then(function (data) {
+            state.feed = data;
+            state.error = false;
+            render();
+          })
+          .catch(function () {
+            state.error = true;
+            render();
+          });
+      }
+
+      document.getElementById("prev").addEventListener("click", function () {
+        shift(-1);
+      });
+      document.getElementById("next").addEventListener("click", function () {
+        shift(1);
+      });
+      applyIdentity();
+      render();
+      loadFeed();
+    </script>
+  </body>
+</html>

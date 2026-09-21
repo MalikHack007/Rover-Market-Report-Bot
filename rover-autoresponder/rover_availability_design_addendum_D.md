@@ -1,7 +1,8 @@
 # Design Addendum D — Client-facing availability calendar
 
-**Status:** v0.4 (D0 proven live; **D1 + D2 built** — publisher, `calcom_client.available_days`,
-public R2 hosting, tests; next: D3 static page)
+**Status:** v0.5 (D0 proven live; **D1 + D2 + D3 built** — publisher, public R2 hosting, and
+the static page (deployed, live at `/index.html`); remaining: root-rewrite rule + service
+restart, then D4 optional nudge)
 **Extends:** `rover_autoresponder_design.md` (v0.3) + Addendum A (SMS) + Addendum B (calendar, v0.7)
 **Owner:** Malik
 **Last updated:** 2026-09-20
@@ -318,8 +319,18 @@ un-authed, the invariant is that it can only ever leak a per-day boolean.**
   green). **⏳ One-time ops step on Malik:** create the public bucket, bind the custom subdomain
   (public GET only), set `AVAIL_R2_BUCKET` + `AVAIL_PUBLIC_BASE_URL` in `.env`, then confirm a
   browser fetches `…/availability/availability.json`.
-- **D3 — Frontend.** `index.html` month grid; upload once; test on mobile; color-blind-safe
-  greying; failure fallback.
+- **D3 — Frontend.** ✅ **Built & deployed.** `availability-front-end-design/index.html` —
+  vanilla single file (no build, no framework), faithful to the prototype's design tokens,
+  reads the live feed via `fetch('availability.json')`, renders the read-only month grid with
+  past days muted / available green-ring / away struck-through / unknown-future "message me to
+  check", keyboard-accessible cells, and a graceful "couldn't load — text me" fallback.
+  Verified in-browser against the sample feed. Deployed via `python -m
+  autoresponder.availability.deploy` (idempotent). **Live at `https://isyujieavailable.com/index.html`.**
+  **⚠️ Root-serving caveat:** R2 custom domains serve objects by exact key and do **not**
+  auto-serve an index document, so the bare `/` 404s. Fix is a one-time Cloudflare **Transform
+  Rule → Rewrite URL**: if `http.request.uri.path eq "/"` rewrite path to `/index.html` (keeps
+  the clean `/` URL). Business name/bio/photo are three editable constants at the top of the
+  page script (`IDENTITY`).
 - **D4 — Event-driven nudge (optional).** Re-publish on booking confirm/cancel/modify.
 - **Phase 3 (later, optional):** a range checker ("enter drop-off/pick-up, get yes/no for the
   whole span") — explicitly out of scope now per owner's read-only-grid choice.
