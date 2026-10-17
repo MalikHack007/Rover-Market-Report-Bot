@@ -1,8 +1,8 @@
 # Design Addendum D — Client-facing availability calendar
 
-**Status:** v0.5 (D0 proven live; **D1 + D2 + D3 built** — publisher, public R2 hosting, and
-the static page (deployed, live at `/index.html`); remaining: root-rewrite rule + service
-restart, then D4 optional nudge)
+**Status:** v0.6 (D0 proven live; **D1 + D2 + D3 built and deployed** — publisher, public R2
+hosting, live page + photo; feed live at `/availability.json`. **D4 dropped** (§9/§12).
+Only open item: the Cloudflare root-rewrite so the bare `/` serves the page.)
 **Extends:** `rover_autoresponder_design.md` (v0.3) + Addendum A (SMS) + Addendum B (calendar, v0.7)
 **Owner:** Malik
 **Last updated:** 2026-09-20
@@ -247,10 +247,17 @@ un-authed, the invariant is that it can only ever leak a per-day boolean.**
 - All-day blocks change infrequently, so a **periodic refresh every 15–30 min** is plenty
   (`AVAIL_REFRESH_SEC`, default 900). One `/v2/slots` range call per refresh (possibly a few if
   paginated) → trivially within Cal.com limits; far lighter than the 60 s booking poller.
-- **Event-driven nudge (optional, phase 2):** re-publish immediately after
-  `scheduling.on_booking_confirmed` / `on_booking_cancelled` / `apply_date_change` so a
-  just-booked-out day greys within seconds instead of up to 30 min. Cheap and keeps the page
-  honest.
+- **Event-driven / change-triggered updates — considered and DECLINED (2026-09-21).** Two
+  variants were weighed and dropped; the periodic refresh is the **sole** update mechanism:
+  - *Booking-event nudge* (re-publish on `on_booking_confirmed` / `on_booking_cancelled` /
+    `apply_date_change`): dropped — the 15-min refresh already reflects these; not worth the
+    coupling.
+  - *Google-Calendar-change trigger* (republish the moment an all-day block is added on either
+    calendar): dropped. True push is impossible here — the box is behind home NAT, the same
+    reason Cal.com is polled not webhooked. A poll-based trigger was possible but would need the
+    box to read the **personal** calendar (its Google token sees only ROVER; only Cal.com sees
+    both), i.e. sharing the personal calendar with the Rover account. Owner chose not to. So an
+    all-day block reflects at the **next periodic refresh** (≤15 min), which is accepted.
 - **Where it runs (settled):** a **new background thread inside `rover-sms.service`** (it
   already hosts the Cal.com poller + Telegram poll). No separate unit. `load_dotenv()` at the entrypoint, **absolute
   paths**, and the `netprefs.py` IPv4 preference imported **early** (Addendum B invariant — the
@@ -331,7 +338,11 @@ un-authed, the invariant is that it can only ever leak a per-day boolean.**
   Rule → Rewrite URL**: if `http.request.uri.path eq "/"` rewrite path to `/index.html` (keeps
   the clean `/` URL). Business name/bio/photo are three editable constants at the top of the
   page script (`IDENTITY`).
-- **D4 — Event-driven nudge (optional).** Re-publish on booking confirm/cancel/modify.
+- **D4 — Event-driven / change-triggered nudge — DROPPED (2026-09-21).** Both the booking-event
+  nudge and the Google-Calendar-change trigger were declined (see §9): the ≤15-min periodic
+  refresh is the accepted update path. No push is possible under home NAT, and a poll-trigger on
+  the personal calendar would require sharing it with the box's Rover account, which the owner
+  chose not to do.
 - **Phase 3 (later, optional):** a range checker ("enter drop-off/pick-up, get yes/no for the
   whole span") — explicitly out of scope now per owner's read-only-grid choice.
 
