@@ -161,6 +161,9 @@ correctness-critical, especially for calendar dates.
   `{SITTER_ALIASES}` and `{WRONG_SITTER_TEMPLATE}` placeholders substituted at prompt-build.
 - `faq.md` (+ `.example`) — **present now** (was deferred); loaded if it exists, for S3
   ad-hoc questions.
+- `voice.md` (+ `.example`) — word-choice/tone guide distilled from real conversations;
+  loaded if it exists (`VOICE_PATH`) and appended LAST to the system prompt at the lowest
+  precedence (hard rules > templates > FAQ > voice). Shapes free-form text only.
 - `debounce.py` — coalesces multi-text openers (stragglers like "I forgot to add my kitten").
 - `store.py` / `models.py` — SQLite state store + schema.
 - `dates.py` — **shared date parsing/formatting** (email dates, SMS booking dates, stored

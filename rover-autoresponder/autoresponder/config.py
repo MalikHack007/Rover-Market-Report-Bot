@@ -51,6 +51,9 @@ DEBOUNCE_SECONDS = int(os.environ.get("DEBOUNCE_SECONDS", "45"))  # coalesce a b
 _HERE = os.path.dirname(__file__)
 PLAYBOOK_PATH = os.environ.get("PLAYBOOK_PATH", os.path.join(_HERE, "playbook.md"))
 FAQ_PATH = os.environ.get("FAQ_PATH", os.path.join(_HERE, "faq.md"))  # optional; loaded if present
+# Voice/word-choice guide for free-form drafting; optional, loaded if present. Real file is
+# gitignored (personal wording); voice.md.example documents the format.
+VOICE_PATH = os.environ.get("VOICE_PATH", os.path.join(_HERE, "voice.md"))
 # Post-confirmation message (packing list, address, drop-off/pick-up links folded in).
 # Real file is gitignored; a .example documents the format. See scheduling.scheduling_message.
 POST_CONFIRMATION_PATH = os.environ.get(

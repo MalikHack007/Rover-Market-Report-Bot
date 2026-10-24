@@ -46,7 +46,8 @@ def load_text(path: str) -> str:
         return ""
 
 
-def build_system_prompt(playbook_text: str, faq_text: str, sitter_name: str) -> str:
+def build_system_prompt(playbook_text: str, faq_text: str, sitter_name: str,
+                        voice_text: str = "") -> str:
     sys_prompt = playbook_text.replace("{SITTER_NAME}", sitter_name or "the sitter")
     # Names a client might legitimately greet you by — anything else in a greeting means
     # the request was meant for a different sitter (§ "Wrong sitter" in the playbook).
@@ -67,6 +68,17 @@ def build_system_prompt(playbook_text: str, faq_text: str, sitter_name: str) -> 
             "meet-and-greet), THIS FAQ wording is the current, authoritative version — "
             "prefer it over the playbook template.\n\n"
             + faq_text
+        )
+    if voice_text.strip():
+        # Voice guide: shapes word choice in the free-form parts only. Lowest precedence —
+        # it must never restyle a fixed template or loosen a hard rule (e.g. no pricing).
+        sys_prompt += (
+            "\n\n# Voice — how you word free-form replies\n"
+            "Use this to sound like the sitter wherever the playbook gives you freedom "
+            "(S2 personal sentence, S3 answers, holding replies, revisions). It has the "
+            "LOWEST precedence: the hard rules, the fixed templates (still verbatim), and "
+            "the FAQ wording all win over it.\n\n"
+            + voice_text
         )
     return sys_prompt
 
@@ -144,6 +156,7 @@ def draft_reply(owner, pet, dates, stored_stage, history,
             load_text(config.PLAYBOOK_PATH),
             load_text(config.FAQ_PATH),
             config.SITTER_NAME,
+            load_text(config.VOICE_PATH),
         )
     user = build_user_content(owner, pet, dates, stored_stage, history, extra_instruction)
     raw = call_model(client, system_prompt, user)
