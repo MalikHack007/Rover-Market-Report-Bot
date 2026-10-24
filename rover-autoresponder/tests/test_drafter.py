@@ -35,6 +35,18 @@ def test_system_prompt_without_faq_has_no_faq_section():
     sp = build_system_prompt(PLAYBOOK, "", "Onel")
     assert "FAQ" not in sp
 
+def test_system_prompt_appends_voice_guide_at_lowest_precedence():
+    sp = build_system_prompt(PLAYBOOK, "Q: parking? A: street.", "Onel",
+                             voice_text="Use 👌🏻 to say ok.")
+    assert "Use 👌🏻 to say ok." in sp
+    assert "LOWEST precedence" in sp
+    # Voice comes after the FAQ so it reads as the final, least-authoritative layer.
+    assert sp.index("# Voice") > sp.index("# FAQ")
+
+def test_system_prompt_without_voice_has_no_voice_section():
+    sp = build_system_prompt(PLAYBOOK, "", "Onel")
+    assert "# Voice" not in sp
+
 def test_user_content_lists_history_in_order():
     uc = build_user_content("Yisell", None, "07/28/2026", "S0_INITIAL",
                             ["Boarding Request - One Time: ...", "Hi Onel, can you watch Milo?"])
